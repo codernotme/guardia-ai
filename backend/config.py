@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Detection thresholds
     alert_threshold: int = 5
     analysis_interval_frames: int = 30
+    stream_fps: int = 10
+    audio_enabled: bool = False
 
     # Database
     database_url: str = "sqlite:///./guardia.db"
@@ -44,10 +46,10 @@ class Settings(BaseSettings):
     motion_dilate_iterations: int = 2
 
     # Gemini model
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
 
     # Groq model
-    groq_model: str = "llama3-8b-8192"
+    groq_model: str = "llama-3.1-8b-instant"
 
     # YOLO (Ultralytics)
     yolo_enabled: bool = True
