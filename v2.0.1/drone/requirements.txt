@@ -1,0 +1,29 @@
+# Guardia AI v2.0.1 — Drone Requirements (Raspberry Pi 4B)
+# =========================================================
+# Tuned for 8GB RAM Pi 4B. No cloud dependencies.
+
+# --- Core ---
+numpy>=1.24,<2.0
+opencv-python-headless>=4.8.0
+pymavlink>=2.4.40
+psutil>=5.9.0
+
+# --- AI Inference (choose one) ---
+# For Pi 4B, use tflite-runtime (lighter than full tensorflow)
+tflite-runtime>=2.14.0
+# Alternatively: tensorflow>=2.14.0 (heavier, ~500MB more RAM)
+
+# --- Camera ---
+# picamera2 is pre-installed on Raspberry Pi OS
+# picamera2>=0.3.12
+
+# --- Video Encoding ---
+# GStreamer bindings (optional, for SRT streaming)
+# PyGObject>=3.42.0
+
+# --- Hardware ---
+# RPi.GPIO is pre-installed on Raspberry Pi OS
+# RPi.GPIO>=0.7.1
+
+# --- Utilities ---
+pyyaml>=6.0

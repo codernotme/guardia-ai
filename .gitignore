@@ -1,58 +1,66 @@
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-!frontend/lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
+dist/
+build/
 *.egg
-MANIFEST
+.eggs/
+*.so
 
-# YOLO weights
-*.pt
-*.onnx
-*.engine
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Logs
+*.log
+logs/
 
 # Database
 *.db
 *.sqlite3
 
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Models (large binary files)
+*.pt
+*.tflite
+*.onnx
+*.pb
+*.h5
+*.weights
+
+# Recordings
+recordings/
+*.mp4
+*.avi
+*.mkv
+
 # Node
 node_modules/
-dist/
 .next/
-.nuxt/
+out/
 
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
+# Colab checkpoints
+.ipynb_checkpoints/
 
-# OS
-.DS_Store
-Thumbs.db
+# Guardia specific
+guardia.db
+guardia_gcs.db
