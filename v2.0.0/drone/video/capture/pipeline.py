@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Video Pipeline
+Guardia AI v2.0.0 — Video Pipeline
 ====================================
 Camera capture, dual-stream (main + AI), hardware H.264 encoding,
 and local recording. Streaming only enabled when modem is active.

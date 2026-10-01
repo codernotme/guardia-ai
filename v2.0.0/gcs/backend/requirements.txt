@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — GCS Backend Requirements
+# Guardia AI v2.0.0 — GCS Backend Requirements
 # ===============================================
 
 fastapi>=0.104.0

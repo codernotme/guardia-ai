@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — ByteTrack Multi-Object Tracker
+Guardia AI v2.0.0 — ByteTrack Multi-Object Tracker
 ====================================================
 Lightweight multi-object tracker for person following, tailing, and rescue.
 Runs entirely offline on Raspberry Pi 4B.

@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Navigation & Path Planning
+Guardia AI v2.0.0 — Navigation & Path Planning
 ================================================
 Search patterns for rescue missions, waypoint navigation,
 and basic obstacle avoidance via altitude.

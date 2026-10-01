@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — MASTER PLAN
+# Guardia AI v2.0.0 — MASTER PLAN
 ## Autonomous Drone: Surveillance, Rescue, Tracking, Delivery
 ### Tackle Studio — Aryan Bajpai
 
@@ -30,7 +30,7 @@
 ## 1. Vision & Scope
 
 ### What We're Building
-A **fully autonomous drone system** that runs on a Raspberry Pi 4B (8GB RAM) with a Pixhawk flight controller. It can:
+A **fully autonomous drone system** that runs on a Raspberry Pi 4B (8GB RAM) with a Pixhawk 2.4.8 flight controller (STM32F427 2MB flash, FMUv3 target). It can:
 
 | Capability | Description | Priority |
 |---|---|---|
@@ -416,43 +416,56 @@ Custom training data needed for:
 
 ## 7. Hardware Wiring Guide
 
-### 7.1 Pixhawk TELEM2 → Pi UART
+### 7.1 Pixhawk 2.4.8 Connection to Raspberry Pi 4B
 
+Guardia AI v2.0.0 supports two connection modes for Pixhawk 2.4.8:
+
+#### Option A: Direct USB Cable (Recommended for Bench & Field)
 ```
-Pixhawk TELEM2          Raspberry Pi 4B
+Pixhawk 2.4.8 Micro-USB ─────────► Raspberry Pi 4B USB Port (/dev/ttyACM0)
+```
+- Hardware flow control handled automatically.
+- No level shifting or GPIO jumpers needed.
+- Solid shielding against motor RF interference.
+
+#### Option B: TELEM2 UART (DF13 6-pin to Pi GPIO)
+```
+Pixhawk 2.4.8 TELEM2    Raspberry Pi 4B
 ┌──────────┐            ┌──────────┐
-│ TX  ─────┼────────────┼─► RXD    │ (GPIO15, Pin 10)
-│ RX  ◄────┼────────────┼── TXD    │ (GPIO14, Pin 8)
-│ GND ─────┼────────────┼── GND    │ (Pin 6)
-│ 5V  ─────┼── DO NOT ──┼── CONNECT│
+│ Pin 2 TX ┼────────────┼─► RXD    │ (GPIO15, Pin 10)
+│ Pin 3 RX ◄────────────┼── TXD    │ (GPIO14, Pin 8)
+│ Pin 6 GND┼────────────┼── GND    │ (Pin 6)
+│ Pin 1 5V ┼── DO NOT ──┼── CONNECT│ (Power Pi via dedicated UBEC)
 └──────────┘            └──────────┘
 
 ⚠️  TX↔RX crossed (Pixhawk TX → Pi RX, Pi TX → Pixhawk RX)
 ⚠️  Both are 3.3V logic — NO level shifter needed
-⚠️  Do NOT connect Pixhawk 5V to Pi — use separate power
+⚠️  Do NOT connect Pixhawk 5V to Pi — use separate 5V 3A power
 ```
 
 ### 7.2 Power Distribution
 
 ```
-Battery (4S LiPo)
-├── Power Module → Pixhawk (battery sensing + FC power)
-├── 5V 5A UBEC → Raspberry Pi 4B (USB-C or GPIO 5V)
-│                └── 4G Modem (if used)
-└── ESC → Motors
-
-⚠️  Pi needs clean, stable 5V 3A minimum
-⚠️  Add 470-1000µF capacitor near modem
-⚠️  Never power Pi from Pixhawk servo rail
+Battery (4S LiPo 14.8V 5200mAh)
+├── 3DR Power Module → Pixhawk 2.4.8 POWER port (5.3V 2.5A + voltage/current sensing)
+├── Matek 5V 3A UBEC → Raspberry Pi 4B (USB-C power port or GPIO Pin 2/4)
+└── 4x 30A ESCs → 4x EMAX MT2213 Brushless Motors
 ```
 
-### 7.3 Camera Connection
+### 7.3 Payload Delivery Servo (AUX1)
+```
+MG996R / Micro Servo
+├── Signal (Orange) → Pixhawk 2.4.8 AUX OUT 1 Signal Pin (CH9)
+├── +5V Power (Red) → 5V BEC Rail Power
+└── Ground (Brown)  → Common Ground
+```
+
+### 7.4 Camera Connection
 
 ```
-Pi Camera Module v2/v3
-└── CSI ribbon cable → Pi Camera Port (lift tab, insert, press)
-
-⚠️  Keep cable short and away from modem/ESC wires
+Pi Camera Module 3 / v2
+└── CSI ribbon cable → Pi 4B Camera Port (lift connector latch, blue tape facing Ethernet, press down)
+```
 ⚠️  Cable is fragile — secure with tape
 ```
 
@@ -661,7 +674,7 @@ ssh pi@guardia.local
 # 3. Run setup script
 cd ~/
 git clone <your-repo> guardia
-cd guardia/v2.0.1/scripts
+cd guardia/v2.0.0/scripts
 chmod +x setup_pi.sh
 sudo ./setup_pi.sh
 
@@ -673,10 +686,10 @@ ls -la /dev/serial0  # Should exist
 # Wire Pixhawk TELEM2 to Pi GPIO 14/15
 
 # 6. Copy AI model
-scp yolov8n.tflite pi@guardia.local:~/guardia/v2.0.1/drone/ai/models/
+scp yolov8n.tflite pi@guardia.local:~/guardia/v2.0.0/drone/ai/models/
 
 # 7. Test
-cd ~/guardia/v2.0.1/drone
+cd ~/guardia/v2.0.0/drone
 source ~/guardia/venv/bin/activate
 python main.py
 ```
@@ -685,7 +698,7 @@ python main.py
 
 ```bash
 # On your laptop/PC
-cd v2.0.1/gcs/backend
+cd v2.0.0/gcs/backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -698,11 +711,11 @@ python main.py
 ### 12.3 How to: Export AI Models (Colab)
 
 ```
-1. Open v2.0.1/colab/model_export.ipynb in Google Colab
+1. Open v2.0.0/colab/model_export.ipynb in Google Colab
 2. Run all cells
 3. Download guardia_models.zip
 4. Extract and copy yolov8n.tflite to Pi:
-   scp yolov8n_float32.tflite pi@guardia.local:~/guardia/v2.0.1/drone/ai/models/yolov8n.tflite
+   scp yolov8n_float32.tflite pi@guardia.local:~/guardia/v2.0.0/drone/ai/models/yolov8n.tflite
 ```
 
 ### 12.4 How to: Pre-Flight Checklist

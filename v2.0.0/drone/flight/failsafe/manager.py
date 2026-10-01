@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Failsafe Manager
+Guardia AI v2.0.0 — Failsafe Manager
 ======================================
 Hardware-level safety enforcement independent of the main agent.
 This is the last line of software defense before Pixhawk firmware failsafes.

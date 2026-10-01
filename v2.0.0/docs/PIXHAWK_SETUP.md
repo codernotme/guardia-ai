@@ -1,249 +1,260 @@
-# Guardia AI v2.0.1 — Pixhawk Setup Guide
-## Complete Flight Controller Configuration
+# Guardia AI v2.0.0 — Pixhawk 2.4.8 Hardware & Setup Guide
+
+Autonomous flight controller configuration for Guardia AI v2.0.0. Specifically tailored for the Pixhawk 2.4.8 flight controller interfaced with a Raspberry Pi 4B (8GB RAM) companion computer.
 
 ---
 
-## 1. Identify Your Pixhawk
+## 1. Pixhawk 2.4.8 Architecture & Specifications
 
-Before anything else, identify your exact board:
+The Pixhawk 2.4.8 is an open-hardware flight controller based on the 3DR Pixhawk FMUv3 design.
 
-| Board | Processor | Flash | Supported FW | Notes |
-|---|---|---|---|---|
-| Pixhawk 1 (3DR) | STM32F427 | 2MB | PX4, ArduPilot | Original |
-| Pixhawk 2.4.8 (clone) | STM32F427 | 2MB | PX4, ArduPilot | Most common cheap clone |
-| Pixhawk 4 | STM32F765 | 2MB | PX4, ArduPilot | Recommended |
-| Pixhawk 4 Mini | STM32F765 | 2MB | PX4, ArduPilot | Compact |
-| Cube Orange | STM32H743 | 2MB | ArduPilot (mainly) | Premium |
-| mRo Pixhawk | STM32F427 | 2MB | PX4, ArduPilot | Quality clone |
-
-**⚠️ If your board has only 1MB flash, recent firmware may not fit. Check the PX4/ArduPilot supported hardware list.**
-
----
-
-## 2. Flash Firmware (One-Time)
-
-### 2.1 Using QGroundControl
-
-> QGroundControl is ONLY used for initial setup. After this, our custom GCS handles everything.
-
-1. Download QGroundControl: http://qgroundcontrol.com
-2. Connect Pixhawk via USB
-3. Go to **Vehicle Setup → Firmware**
-4. Select firmware:
-   - **PX4** (recommended for offboard/follow mode)
-   - **ArduPilot** (alternative, mature guided mode)
-5. Click "OK" to flash
-6. Wait for completion
-
-### 2.2 Choose PX4 vs ArduPilot
-
-| Feature | PX4 | ArduPilot |
+| Specification | Value | Notes |
 |---|---|---|
-| Offboard mode | First-class, clean API | "Guided" mode, slightly different |
-| MAVSDK support | Full | Partial |
-| pymavlink support | Full | Full |
-| Community | Growing | Massive, more tutorials |
-| Failsafes | Good | Very mature |
-| Our code support | ✅ Both supported | ✅ Both supported |
+| Main Processor | STM32F427VI ARM Cortex-M4F @ 168 MHz | Hardware FPU, 256 KB RAM, 2 MB Flash |
+| Failsafe Co-processor | STM32F100 32-bit Cortex-M0 | Handles manual RC pass-through and failsafes |
+| Primary IMU | InvenSense MPU6000 3-axis accel/gyro | High vibration tolerance over internal SPI bus |
+| Secondary IMU | ST Micro LSM303D (accel/mag) + L3GD20 (gyro) | Redundant sensor suite over SPI |
+| Barometer | Measurement Specialties MS5611 | High precision altitude estimation |
+| Compass | External HMC5883L / QMC5883L | Mounted on GPS mast via I2C |
+| Operating Voltage | 4.8V to 5.4V DC | Must be powered via 3DR Power Module BEC |
+| MicroSD Card | FAT32 formatted, up to 32GB | Stores high-rate DataFlash binary logs (.bin) |
 
-**Default: PX4.** Switch to ArduPilot if your board doesn't support recent PX4.
-
----
-
-## 3. Sensor Calibration
-
-### In QGroundControl → Vehicle Setup:
-
-1. **Accelerometer** — Follow the rotation prompts (6 positions)
-2. **Gyroscope** — Place on flat surface, don't touch
-3. **Compass** — Rotate in all orientations
-4. **Level Horizon** — Place level, click calibrate
-5. **Radio Setup** — Bind RC transmitter, calibrate sticks
-
-### Important:
-- Calibrate compass AWAY from motors and metal
-- GPS/compass should be on a mast, not near the battery
-- Re-calibrate if you change the physical setup
+> [!IMPORTANT]
+> Firmware target: Select **FMUv3** (NOT FMUv2) when flashing ArduPilot or PX4. The STM32F427 on Pixhawk 2.4.8 features the revision 3 silicon with the full 2MB flash, which avoids the 1MB flash allocation bug of legacy boards and supports all autonomous features.
 
 ---
 
-## 4. Configure TELEM2 for Companion Computer
+## 2. Port Pinouts and Connector Reference
 
-### PX4 Parameters (set in QGC → Parameters)
-
-```
-MAV_1_CONFIG = TELEM 2
-MAV_1_MODE = Onboard
-MAV_1_RATE = 0             (maximum rate)
-MAV_1_FORWARD = 1          (forward to other MAVLink instances)
-SER_TEL2_BAUD = 921600     (match Pi serial config)
-```
-
-### ArduPilot Parameters
+Pixhawk 2.4.8 uses DF13 / Molex PicoBlade style 1.25mm pitch locking connectors.
 
 ```
-SERIAL2_PROTOCOL = 2       (MAVLink2)
-SERIAL2_BAUD = 921          (921600 baud)
+       PIXHAWK 2.4.8 TOP VIEW CONNECTOR MAP
++---------------------------------------------------+
+|  [TELEM1]   [TELEM2]    [GPS]     [I2C]    [CAN]  |
+|   6-pin      6-pin      6-pin     4-pin    4-pin  |
+|                                                   |
+|  [POWER]                                          |
+|   6-pin                    [SAFETY SWITCH] 2-pin  |
+|                            [PIEZO BUZZER]  2-pin  |
+|                                                   |
+|  [RC IN] === 3-pin (SBUS/PPM Inverter built-in)   |
+|                                                   |
+|  MAIN OUT 1-8  [ - + S ] (ESCs: CH 1-4)           |
+|  AUX OUT  1-6  [ - + S ] (Payload Servo: AUX1=CH9)|
++---------------------------------------------------+
 ```
 
-### Verify
-After setting parameters, reboot the Pixhawk and check the TELEM2 LED blinks.
+### TELEM2 Pinout (Companion Computer Serial Link)
+| Pin # | Wire Name | Voltage Level | Destination on Raspberry Pi 4B |
+|---|---|---|---|
+| 1 | VCC | +5V DC | DO NOT CONNECT (Power Pi via dedicated UBEC) |
+| 2 | TXD (Out) | 3.3V TTL | Pi 4B Pin 10 (GPIO 15 / RXD0) |
+| 3 | RXD (In) | 3.3V TTL | Pi 4B Pin 8 (GPIO 14 / TXD0) |
+| 4 | CTS | 3.3V TTL | Optional (Leave unconnected) |
+| 5 | RTS | 3.3V TTL | Optional (Leave unconnected) |
+| 6 | GND | 0V Ground | Pi 4B Pin 6 or 9 (Ground) |
 
----
-
-## 5. Failsafe Configuration
-
-### PX4 Failsafes
-
-```
-# RC Loss
-NAV_RCL_ACT = 2            (Return to launch)
-COM_RC_LOSS_T = 3.0         (3 second timeout)
-
-# Data Link (GCS) Loss
-NAV_DLL_ACT = 0            (Disabled — we handle this in software)
-COM_DL_LOSS_T = 10          (10 second timeout)
-
-# Low Battery
-COM_LOW_BAT_ACT = 3         (Return to launch)
-BAT_LOW_THR = 0.15          (15% remaining)
-BAT_CRIT_THR = 0.05         (5% remaining)
-BAT_EMERGEN_THR = 0.03      (3% — emergency land)
-
-# Geofence
-GF_ACTION = 3               (Return to launch)
-GF_MAX_HOR_DIST = 150       (150m radius)
-GF_MAX_VER_DIST = 50        (50m altitude)
-
-# Offboard mode loss
-COM_OF_LOSS_T = 0.5          (0.5s before exiting offboard)
-COM_OBL_ACT = 1              (Hold position on offboard loss)
-COM_OBL_RC_ACT = 1           (Position mode on offboard loss if RC available)
-```
-
-### ArduPilot Failsafes
-
-```
-# RC Loss
-FS_THR_ENABLE = 1           (Enabled, RTL)
-FS_THR_VALUE = 975           (PWM threshold)
-
-# GCS Loss
-FS_GCS_ENABLE = 1           (Enabled, RTL)
-
-# Battery
-BATT_FS_LOW_ACT = 2         (RTL on low)
-BATT_LOW_VOLT = 14.0        (14V for 4S = 3.5V/cell)
-BATT_FS_CRT_ACT = 1         (Land on critical)
-BATT_CRT_VOLT = 13.2        (13.2V for 4S = 3.3V/cell)
-
-# Geofence
-FENCE_ENABLE = 1
-FENCE_TYPE = 7               (Circle + altitude + floor)
-FENCE_RADIUS = 150           (150m)
-FENCE_ALT_MAX = 50           (50m)
-FENCE_ACTION = 1             (RTL)
-```
-
----
-
-## 6. RC Setup
-
-### Required Switches
-
-| Switch | Function | Channel |
+### POWER Port Pinout (From 3DR Power Module)
+| Pin # | Description | Notes |
 |---|---|---|
-| Flight mode | MANUAL ↔ STABILIZE ↔ OFFBOARD | CH5 |
-| Kill switch | Emergency motor kill | CH6 |
-| RTL switch | Return to launch | CH7 (or combine with mode) |
+| 1, 2 | VCC (+5.3V) | Clean regulated power to Pixhawk |
+| 3 | Current Sense | Analog 0V to 3.3V (17.0 Amps per Volt) |
+| 4 | Voltage Sense | Analog 0V to 3.3V (10.1 Voltage Divider) |
+| 5, 6 | GND (Ground) | System common ground |
 
-### PX4 Flight Mode Mapping
+### AUX OUT Pinout (Payload Delivery Servo)
+| Channel | Function | Parameter Setting | Description |
+|---|---|---|---|
+| AUX 1 (Pin 9) | Payload Drop Servo | `SERVO9_FUNCTION = 0` (or `28`) | Actuated via MAVLink `MAV_CMD_DO_SET_SERVO` |
+| AUX 2 (Pin 10) | Secondary Release | `SERVO10_FUNCTION = 0` | Optional auxiliary release latch |
+
+> [!WARNING]
+> Servo Rail Power: The + (center) pin on the AUX and MAIN rail does NOT output 5V power from the Pixhawk power module. To power a delivery servo on AUX1, connect a 5V BEC or powered ESC 5V wire to the center pin of any unused servo slot on the rail.
+
+---
+
+## 3. Connecting Raspberry Pi 4B to Pixhawk 2.4.8
+
+Guardia AI v2.0.0 supports two connection methods. Option 1 is recommended for initial assembly and testing.
+
+### Option 1: Direct USB Cable (Recommended)
+Connect a high-quality shielded USB-A to Micro-USB cable from any USB 2.0 / 3.0 port on the Raspberry Pi 4B directly to the Micro-USB port on the side of the Pixhawk 2.4.8.
+- Device node: `/dev/ttyACM0` (or symlinked by udev rule).
+- Baud rate: 921600 or 115200.
+- Advantages: built-in hardware flow control, high noise immunity, no jumper wire soldering.
+
+### Option 2: TELEM2 UART Serial
+Connect Pixhawk TELEM2 to Pi 4B GPIO 14/15:
+- Device node: `/dev/serial0` (UART0).
+- Baud rate: 921600 baud.
+- Pi OS configuration required in `/boot/firmware/config.txt` (or `/boot/config.txt`):
+  ```ini
+  enable_uart=1
+  dtoverlay=disable-bt
+  ```
+  Disable Linux serial console in `/boot/firmware/cmdline.txt` (remove `console=serial0,115200`).
+
+---
+
+## 4. Firmware Installation
+
+Use Mission Planner (Windows) or QGroundControl (Linux / macOS / Windows) to flash the latest stable firmware:
+
+1. Connect Pixhawk 2.4.8 via USB to your workstation computer.
+2. In Mission Planner, go to **Setup → Install Firmware**.
+3. Select **ArduCopter v4.4+ (fmuv3)**.
+4. Wait for the audio beeps confirming successful flashing.
+
+---
+
+## 5. Critical Parameters Configuration
+
+Connect to Pixhawk in Mission Planner, open **Config → Full Parameter Tree**, and configure the following parameters:
+
+### 5.1 Serial Companion Computer Link
+```ini
+SERIAL2_PROTOCOL = 2       # MAVLink 2.0 protocol on TELEM2
+SERIAL2_BAUD = 921          # 921600 baud rate (or 115 for 115200)
 ```
-RC_MAP_FLTMODE = 5           (Channel 5 for flight mode)
-COM_FLTMODE1 = Manual
-COM_FLTMODE4 = Position
-COM_FLTMODE6 = Offboard      (for autonomous)
+If using USB connection (`/dev/ttyACM0`), Pixhawk auto-detects MAVLink 2 on the USB virtual serial port.
+
+### 5.2 Battery Monitor Calibration (3DR Power Module)
+```ini
+BATT_MONITOR = 4           # Analog voltage and current
+BATT_VOLT_PIN = 2          # Pixhawk voltage ADC pin
+BATT_CURR_PIN = 3          # Pixhawk current ADC pin
+BATT_VOLT_MULT = 10.1      # Standard 3DR voltage divider ratio
+BATT_AMP_PERVLT = 17.0     # Amperes per volt calibration factor
 ```
 
-### ArduPilot Flight Mode Mapping
+### 5.3 Zero-Telemetry & Failsafe Parameters (Offline Missions)
+In zero-telemetry mode, the drone operates autonomously without an active internet link. Setting these parameters prevents unexpected failsafe RTL triggers during autonomous follow missions:
+
+```ini
+FS_GCS_ENABLE = 0          # Disabled. Prevents RTL when outside local GCS range!
+FS_THR_ENABLE = 1          # RC Throttle Failsafe: Enabled (RTL on RC transmitter loss)
+FS_THR_VALUE = 975         # PWM threshold for RC loss detection
+BATT_FS_LOW_ACT = 2        # Return to Launch (RTL) when battery hits low voltage
+BATT_LOW_VOLT = 14.0       # 14.0V threshold for 4S LiPo (3.5V per cell)
+BATT_FS_CRT_ACT = 1        # Emergency Land immediately on critical battery
+BATT_CRT_VOLT = 13.2       # 13.2V threshold for 4S LiPo (3.3V per cell)
+FENCE_ENABLE = 1           # Hardware geofence active
+FENCE_TYPE = 7             # Circle radius + maximum altitude
+FENCE_RADIUS = 150         # 150 meters maximum horizontal distance
+FENCE_ALT_MAX = 50         # 50 meters maximum vertical altitude
+FENCE_ACTION = 1           # Return to Launch if geofence breached
+ARMING_CHECK = 1           # All pre-arm safety checks enabled
 ```
-FLTMODE_CH = 5
-FLTMODE1 = 0                 (Stabilize)
-FLTMODE4 = 5                 (Loiter)
-FLTMODE6 = 4                 (Guided — for autonomous)
+
+### 5.4 Payload Drop Servo Configuration (AUX1)
+```ini
+SERVO9_FUNCTION = 0        # Manual / MAVLink DO_SET_SERVO control
+SERVO9_MIN = 1000          # 1000 us (locked position)
+SERVO9_MAX = 2000          # 2000 us (open release position)
+SERVO9_TRIM = 1000         # Default resting state
+```
+
+### 5.5 RC Transmitter Mapping (FlySky FS-i6X)
+Configure your 6 to 10 channel RC transmitter with SBUS receiver connected to Pixhawk `RC IN`:
+```ini
+FLTMODE_CH = 5             # Channel 5 controls primary flight modes
+FLTMODE1 = 0               # STABILIZE (Manual pilot recovery)
+FLTMODE4 = 5               # LOITER (GPS position hold)
+FLTMODE6 = 4               # GUIDED (Companion computer autonomous control)
+RC6_OPTION = 32            # Channel 6 switch: Emergency Motor Interlock / Kill switch
 ```
 
 ---
 
-## 7. Frame Configuration
+## 6. Sensor Calibration Workflow
 
-### ESC Protocol
-```
-# PX4
-PWM_MAIN_RATE = 400          (400Hz for most ESCs)
+Before arming or testing autonomous modes, complete these calibrations in Mission Planner under **Setup → Mandatory Hardware**:
 
-# ArduPilot
-MOT_PWM_TYPE = 0             (Normal)
-MOT_PWM_MIN = 1000
-MOT_PWM_MAX = 2000
-```
-
-### Motor Order
-- Check PX4 or ArduPilot docs for your frame type
-- Verify motor spin direction
-- Test with props OFF first
+1. **Accelerometer Calibration**: Place Pixhawk level, then follow prompts to place on left side, right side, nose down, nose up, and back.
+2. **Compass Calibration**: Rotate the drone on all 3 axes outdoors, away from metal structures and high-voltage power lines, until the calibration bar fills green.
+3. **Radio Calibration**: Move transmitter sticks and switches to all extreme limits to record PWM ranges (1000 to 2000 us).
+4. **ESC Calibration**:
+   - REMOVE ALL PROPELLERS.
+   - Push throttle to maximum, power on drone, power cycle, push throttle to zero. Listen for confirmation beeps.
 
 ---
 
-## 8. Pre-Flight Verification
+## 7. Companion Verification Script
 
-After all configuration, with Pixhawk connected to Pi:
+Run this verification script on the Raspberry Pi 4B to confirm full communication with the Pixhawk 2.4.8:
 
 ```bash
-# On the Pi
-cd ~/guardia/v2.0.1/drone
+cd ~/guardia/v2.0.0/drone
 source ~/guardia/venv/bin/activate
 python3 -c "
 import asyncio
 from flight.mavlink.interface import MAVLinkInterface
 
-async def test():
-    mav = MAVLinkInterface('/dev/serial0', 921600)
-    if await mav.connect():
-        print('✅ Pixhawk connected!')
-        print(f'  Flight mode: {mav.telemetry.flight_mode}')
-        print(f'  Armed: {mav.telemetry.armed}')
-        print(f'  GPS fix: {mav.telemetry.gps_fix_type}')
-        print(f'  Battery: {mav.telemetry.battery_voltage:.1f}V')
+async def verify():
+    print('Testing Pixhawk 2.4.8 communication...')
+    mav = MAVLinkInterface(port='/dev/ttyACM0', baud=921600, firmware='ardupilot')
+    connected = await mav.connect()
+    if not connected:
+        print('Retrying on UART serial port /dev/serial0...')
+        mav = MAVLinkInterface(port='/dev/serial0', baud=921600, firmware='ardupilot')
+        connected = await mav.connect()
+
+    if connected:
+        print('=========================================')
+        print('✅ PIXHAWK 2.4.8 HANDSHAKE SUCCESSFUL')
+        print('=========================================')
+        await asyncio.sleep(1.0)
+        t = mav.telemetry
+        print(f'Flight Mode    : {t.flight_mode}')
+        print(f'Arm Status     : {\"ARMED\" if t.armed else \"DISARMED\"}')
+        print(f'Battery        : {t.battery_voltage:.2f}V ({t.battery_remaining}%)')
+        print(f'GPS Satellites : {t.gps_satellites} (Fix Type: {t.gps_fix_type})')
+        print(f'Heading        : {t.heading:.1f} deg')
+        print(f'Roll / Pitch   : {t.roll:.2f} rad / {t.pitch:.2f} rad')
+        
+        # Test servo channel 9 (AUX1)
+        print('Testing AUX1 payload servo command...')
+        await mav.set_servo(9, 1000)
+        print('✅ AUX1 locked at 1000 us')
     else:
-        print('❌ Connection failed')
+        print('❌ Failed to establish communication with Pixhawk 2.4.8')
     await mav.disconnect()
 
-asyncio.run(test())
+asyncio.run(verify())
 "
 ```
 
-Expected output:
+Expected terminal output:
 ```
-✅ Pixhawk connected!
-  Flight mode: MANUAL
-  Armed: False
-  GPS fix: 3
-  Battery: 16.4V
+Testing Pixhawk 2.4.8 communication...
+Attempting Pixhawk 2.4.8 connection on: /dev/ttyACM0 @ 921600 baud
+Waiting for Pixhawk heartbeat on /dev/ttyACM0...
+✅ Pixhawk 2.4.8 connected on /dev/ttyACM0 | system=1 component=1 | firmware=ardupilot
+=========================================
+✅ PIXHAWK 2.4.8 HANDSHAKE SUCCESSFUL
+=========================================
+Flight Mode    : STABILIZE
+Arm Status     : DISARMED
+Battery        : 15.20V (85%)
+GPS Satellites : 12 (Fix Type: 3)
+Heading        : 142.5 deg
+Roll / Pitch   : 0.01 rad / -0.02 rad
+Testing AUX1 payload servo command...
+Setting Pixhawk servo ch 9 to 1000 us
+✅ AUX1 locked at 1000 us
 ```
 
 ---
 
-## 9. Troubleshooting
+## 8. Pixhawk 2.4.8 Troubleshooting
 
-| Problem | Cause | Fix |
+| Symptom | Cause | Solution |
 |---|---|---|
-| No heartbeat | UART not configured | Check `dtoverlay=disable-bt` in /boot/config.txt |
-| No heartbeat | Wrong baud rate | Try 115200, 57600, 921600 |
-| No heartbeat | TX/RX not crossed | Swap TX and RX wires |
-| No heartbeat | Serial console active | Run `sudo raspi-config` → Interface → Serial → disable console |
-| "Permission denied" on /dev/serial0 | User not in dialout group | `sudo usermod -aG dialout pi` |
-| GPS no fix | Antenna obstructed | Move GPS to open sky, away from metal |
-| Compass errors | Interference | Mount compass on mast, away from motors/battery |
-| ESC beeping | Not calibrated | Calibrate ESCs in QGC |
-| Motor wrong direction | Motor wire order | Swap any 2 of the 3 motor wires |
+| Main LED flashes yellow (double beep) | Pre-arm check failure | Connect GCS to read pre-arm error (e.g. compass uncalibrated or no GPS lock). |
+| No heartbeat on `/dev/ttyACM0` | USB cable is power-only or permissions issue | Use data-capable micro-USB cable. Add user to dialout: `sudo usermod -aG dialout pi`. |
+| No heartbeat on `/dev/serial0` | Serial console active or baud mismatch | Disable serial console in `raspi-config`. Set `SERIAL2_BAUD = 921` in Pixhawk. |
+| Voltage reading inaccurate | Divider ratio uncalibrated | Measure LiPo with digital multimeter, adjust `BATT_VOLT_MULT` in Mission Planner. |
+| Bad Compass Health | Magnetometer near power wires | Raise GPS/compass puck on 14cm mast away from battery and motor ESC lines. |
+| Offboard control rejected | No 3D GPS lock or arming required | Ensure GPS has >= 8 satellites (`gps_fix_type >= 3`) before entering Guided mode. |
+| Servo doesn't move on AUX1 | No 5V power on servo rail | Connect 5V BEC power to the center pin of the Pixhawk servo output rail. |

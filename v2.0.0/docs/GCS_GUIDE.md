@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — GCS Development Guide
+# Guardia AI v2.0.0 — GCS Development Guide
 ## Custom Ground Control Station Build Plan
 
 ---
@@ -71,7 +71,7 @@ File: `gcs/backend/main.py`
 
 ### Running the Backend
 ```bash
-cd v2.0.1/gcs/backend
+cd v2.0.0/gcs/backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -131,7 +131,7 @@ connection = mavutil.mavlink_connection("udpin:0.0.0.0:14550")
 
 ### Frontend Init Commands
 ```bash
-cd v2.0.1/gcs/frontend
+cd v2.0.0/gcs/frontend
 npx -y create-next-app@latest ./ --typescript --app --src-dir --no-tailwind --eslint --no-import-alias
 npm install maplibre-gl recharts
 ```

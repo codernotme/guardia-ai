@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — MAVLink Flight Interface
+Guardia AI v2.0.0 — MAVLink Flight Interface
 ==============================================
 Handles all communication with the Pixhawk flight controller
 via MAVLink 2 over UART. Uses pymavlink for direct control.
@@ -165,39 +165,55 @@ class MAVLinkInterface:
         self._telemetry_callback = callback
 
     async def connect(self) -> bool:
-        """Connect to Pixhawk via serial port."""
+        """Connect to Pixhawk via serial port with auto-probe fallbacks."""
         try:
             from pymavlink import mavutil
+            import os
 
-            logger.info("Connecting to Pixhawk: %s @ %d baud", self._port, self._baud)
+            # Candidate ports for Pixhawk 2.4.8
+            candidate_ports = [self._port]
+            for p in ["/dev/ttyACM0", "/dev/serial0", "/dev/ttyAMA0", "/dev/ttyUSB0"]:
+                if p not in candidate_ports and os.path.exists(p):
+                    candidate_ports.append(p)
 
-            self._connection = mavutil.mavlink_connection(
-                self._port,
-                baud=self._baud,
-                source_system=self._source_system,
-                source_component=self._source_component,
-            )
+            for port in candidate_ports:
+                logger.info("Attempting Pixhawk 2.4.8 connection on: %s @ %d baud", port, self._baud)
+                try:
+                    self._connection = mavutil.mavlink_connection(
+                        port,
+                        baud=self._baud,
+                        source_system=self._source_system,
+                        source_component=self._source_component,
+                    )
 
-            # Wait for heartbeat
-            logger.info("Waiting for Pixhawk heartbeat...")
-            msg = self._connection.wait_heartbeat(timeout=10)
+                    # Wait for heartbeat
+                    logger.info("Waiting for Pixhawk heartbeat on %s...", port)
+                    msg = self._connection.wait_heartbeat(timeout=3)
 
-            if msg:
-                self._connected = True
-                self._telemetry.last_heartbeat = time.monotonic()
-                logger.info(
-                    "✅ Pixhawk connected | system=%d component=%d | firmware=%s",
-                    self._connection.target_system,
-                    self._connection.target_component,
-                    self._firmware,
-                )
+                    if msg:
+                        self._port = port
+                        self._connected = True
+                        self._telemetry.last_heartbeat = time.monotonic()
+                        logger.info(
+                            "✅ Pixhawk 2.4.8 connected on %s | system=%d component=%d | firmware=%s",
+                            port,
+                            self._connection.target_system,
+                            self._connection.target_component,
+                            self._firmware,
+                        )
 
-                # Request data streams
-                self._request_data_streams()
-                return True
-            else:
-                logger.error("❌ No heartbeat from Pixhawk within 10s")
-                return False
+                        # Request data streams
+                        self._request_data_streams()
+                        return True
+                    else:
+                        logger.warning("No heartbeat on %s within 3s", port)
+                        if self._connection:
+                            self._connection.close()
+                except Exception as port_err:
+                    logger.warning("Failed connecting on %s: %s", port, port_err)
+
+            logger.error("❌ Failed to connect to Pixhawk 2.4.8 on all candidate ports: %s", candidate_ports)
+            return False
 
         except ImportError:
             logger.error("pymavlink not installed. Install with: pip install pymavlink")
@@ -544,6 +560,58 @@ class MAVLinkInterface:
         dlam = math.radians(lon2 - lon1)
         a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    async def set_servo(self, channel: int, pwm: int) -> bool:
+        """
+        Set PWM output on a Pixhawk servo channel.
+        For Pixhawk 2.4.8:
+        Channel 1-8: MAIN OUT
+        Channel 9-14: AUX OUT 1-6 (AUX1 = 9)
+
+        Args:
+            channel: Servo channel (e.g. 9 for AUX1)
+            pwm: PWM value in microseconds (typically 1000 to 2000)
+        """
+        if not self._connected:
+            logger.warning("Cannot set servo: Pixhawk not connected")
+            return False
+
+        from pymavlink import mavutil
+
+        logger.info("Setting Pixhawk servo ch %d to %d us", channel, pwm)
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+            0,
+            channel,
+            pwm,
+            0, 0, 0, 0, 0,
+        )
+        return True
+
+    async def set_gripper(self, action: int = 0) -> bool:
+        """
+        Command ArduPilot gripper library.
+        Args:
+            action: 0 for release, 1 for grab
+        """
+        if not self._connected:
+            return False
+
+        from pymavlink import mavutil
+
+        logger.info("Commanding gripper action: %d (0=release, 1=grab)", action)
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_DO_GRIPPER,
+            0,
+            1,  # Gripper instance 1
+            action,
+            0, 0, 0, 0, 0,
+        )
+        return True
 
     async def disconnect(self):
         """Close the MAVLink connection."""

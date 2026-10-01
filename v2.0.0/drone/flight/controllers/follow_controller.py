@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Follow Controller
+Guardia AI v2.0.0 — Follow Controller
 =======================================
 Converts target tracking offsets into velocity commands for the Pixhawk.
 Handles follow mode, tail mode, and orbit mode.

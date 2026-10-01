@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Main Drone Entrypoint
+Guardia AI v2.0.0 — Main Drone Entrypoint
 ===========================================
 Boots all subsystems and runs the drone agent.
 This is what you run on the Raspberry Pi 4B.
@@ -32,7 +32,7 @@ def print_banner():
     banner = """
     ╔══════════════════════════════════════════════════════╗
     ║                                                      ║
-    ║     🚁  GUARDIA AI v2.0.1  —  AUTONOMOUS DRONE      ║
+    ║     🚁  GUARDIA AI v2.0.0  —  AUTONOMOUS DRONE      ║
     ║                                                      ║
     ║     Surveillance • Rescue • Tracking • Delivery      ║
     ║     Tackle Studio — by Aryan Bajpai                  ║
@@ -47,7 +47,7 @@ def print_banner():
 async def main():
     print_banner()
     logger.info("=" * 60)
-    logger.info("GUARDIA AI v2.0.1 — DRONE STARTUP")
+    logger.info("GUARDIA AI v2.0.0 — DRONE STARTUP")
     logger.info("=" * 60)
 
     # ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — AI Workflow Guide
+# Guardia AI v2.0.0 — AI Workflow Guide
 ## How to Run AI Models: Training, Export, Deployment
 
 > This project is 100% AI-operated. This guide covers every step
@@ -34,7 +34,7 @@ Pixhawk (Flight)
 
 ### 1.1 Open the Notebook
 ```
-File: v2.0.1/colab/model_export.ipynb
+File: v2.0.0/colab/model_export.ipynb
 Open in: Google Colab (colab.research.google.com)
 Runtime: GPU (free tier is fine)
 ```
@@ -67,14 +67,14 @@ guardia_models/
 ### 2.1 Copy Model
 ```bash
 # From your laptop
-scp yolov8n_float32.tflite pi@guardia.local:~/guardia/v2.0.1/drone/ai/models/yolov8n.tflite
+scp yolov8n_float32.tflite pi@guardia.local:~/guardia/v2.0.0/drone/ai/models/yolov8n.tflite
 ```
 
 ### 2.2 Verify on Pi
 ```bash
 # SSH into Pi
 ssh pi@guardia.local
-cd ~/guardia/v2.0.1/drone
+cd ~/guardia/v2.0.0/drone
 
 # Activate virtual environment
 source ~/guardia/venv/bin/activate

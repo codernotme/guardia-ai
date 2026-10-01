@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Ground Control Station (GCS) Backend
+Guardia AI v2.0.0 — Ground Control Station (GCS) Backend
 ==========================================================
 Custom GCS that replaces QGroundControl / Mission Planner.
 FastAPI + WebSocket for real-time telemetry and commands.
@@ -264,7 +264,7 @@ app = FastAPI(
         "- `POST /api/v1/command` — Send command to drone\n"
         "- `WS /ws/telemetry` — Real-time telemetry stream\n"
     ),
-    version="2.0.1",
+    version="2.0.0",
     contact={"name": "Aryan Bajpai — Tackle Studio"},
     license_info={"name": "MIT"},
     lifespan=lifespan,
@@ -433,6 +433,14 @@ async def websocket_telemetry(ws: WebSocket):
     except Exception as e:
         logger.error("WebSocket error: %s", e)
         manager.disconnect(ws)
+
+
+# Mount static tactical frontend if directory exists
+import os
+frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+if os.path.isdir(frontend_dir):
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+    logger.info("Mounted static GCS frontend from %s", frontend_dir)
 
 
 # ──────────────────────────────────────────────────────────────

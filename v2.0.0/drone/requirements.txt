@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — Drone Requirements (Raspberry Pi 4B)
+# Guardia AI v2.0.0 — Drone Requirements (Raspberry Pi 4B)
 # =========================================================
 # Tuned for 8GB RAM Pi 4B. No cloud dependencies.
 

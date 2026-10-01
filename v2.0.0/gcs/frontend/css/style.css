@@ -1,0 +1,281 @@
+/* Guardia AI v2.0.0 — Tactical HUD Stylesheet */
+:root {
+  --color-bg-base: #090B0E;
+  --color-bg-surface: #11151B;
+  --color-bg-elevated: #1B222C;
+  --color-border-subtle: #222B38;
+  --color-border-active: #3A475C;
+  --color-hud-primary: #00F0FF;
+  --color-hud-success: #00E676;
+  --color-hud-warning: #FFD600;
+  --color-hud-danger: #FF1744;
+  --color-hud-text: #EDF2F7;
+  --color-hud-dim: #718096;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'Roboto Mono', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--color-bg-base);
+  color: var(--color-hud-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-x: hidden;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header Banner */
+.hud-header {
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.hud-title-cluster {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud-callsign {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--color-hud-primary);
+}
+
+.hud-pill {
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border: 1px solid currentColor;
+}
+
+.hud-pill--connected { color: var(--color-hud-success); border-color: var(--color-hud-success); }
+.hud-pill--danger { color: var(--color-hud-danger); border-color: var(--color-hud-danger); }
+.hud-pill--warning { color: var(--color-hud-warning); border-color: var(--color-hud-warning); }
+.hud-pill--neutral { color: var(--color-hud-dim); border-color: var(--color-border-active); }
+
+.hud-metrics-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.hud-metric-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.hud-metric-label {
+  font-size: 10px;
+  color: var(--color-hud-dim);
+  text-transform: uppercase;
+}
+
+.hud-metric-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Main Display Grid */
+.hud-main-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  flex: 1;
+  overflow: hidden;
+}
+
+@media (max-width: 1024px) {
+  .hud-main-grid {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+}
+
+/* Side Panels */
+.hud-panel {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.hud-panel-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--color-hud-dim);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: 6px;
+}
+
+/* Center Viewport */
+.hud-viewport-container {
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.hud-video-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.hud-overlay-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+/* Synthetic Artificial Horizon */
+.hud-artificial-horizon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  height: 200px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hud-pitch-ladder {
+  width: 140px;
+  height: 2px;
+  background: var(--color-hud-primary);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+.hud-waterline {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--color-hud-warning);
+  border-radius: 50%;
+}
+
+.hud-crosshair-center {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--color-hud-warning);
+  border-radius: 50%;
+}
+
+/* Tactical Reticle */
+.hud-target-reticle {
+  position: absolute;
+  border: 2px solid var(--color-hud-success);
+  box-shadow: 0 0 10px rgba(0, 230, 118, 0.5);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hud-reticle-tag {
+  background: rgba(0, 230, 118, 0.2);
+  color: var(--color-hud-success);
+  font-size: 10px;
+  padding: 2px 4px;
+  align-self: flex-start;
+  margin: -16px 0 0 0;
+  white-space: nowrap;
+}
+
+/* Controls Grid */
+.hud-controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.hud-btn {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-active);
+  color: var(--color-hud-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 12px;
+  border-radius: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.hud-btn:hover {
+  background: #252F3D;
+  border-color: var(--color-hud-primary);
+}
+
+.hud-btn--primary {
+  background: rgba(0, 240, 255, 0.15);
+  border-color: var(--color-hud-primary);
+  color: var(--color-hud-primary);
+}
+
+.hud-btn--danger {
+  background: rgba(255, 23, 68, 0.2);
+  border-color: var(--color-hud-danger);
+  color: var(--color-hud-danger);
+  grid-column: span 2;
+}
+
+.hud-btn--danger:hover {
+  background: rgba(255, 23, 68, 0.35);
+}
+
+/* Event Log List */
+.hud-log-stream {
+  list-style: none;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hud-log-entry {
+  display: flex;
+  gap: 8px;
+  color: var(--color-hud-dim);
+}
+
+.hud-log-time {
+  color: var(--color-border-active);
+}
+
+.hud-log-entry--warn { color: var(--color-hud-warning); }
+.hud-log-entry--crit { color: var(--color-hud-danger); font-weight: 700; }

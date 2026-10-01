@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Drone Core Agent
+Guardia AI v2.0.0 — Drone Core Agent
 ======================================
 The master brain. Manages the drone state machine, coordinates all subsystems
 (flight, AI, video, delivery), and enforces safety at every step.

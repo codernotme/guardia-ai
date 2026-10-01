@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Offline Object Detector
+Guardia AI v2.0.0 — Offline Object Detector
 =============================================
 Runs YOLOv8-nano via TFLite or NCNN on Raspberry Pi 4B.
 Zero network calls. Zero telemetry. Pure on-device inference.

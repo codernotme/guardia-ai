@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Delivery Service
+Guardia AI v2.0.0 — Delivery Service
 ======================================
 Payload delivery system for the drone.
 Controls a servo-driven release mechanism.
@@ -50,12 +50,16 @@ class DeliveryService:
         lock_angle: int = 0,
         drop_altitude: float = 3.0,
         approach_radius: float = 2.0,
+        mavlink_interface: Optional[object] = None,
+        pixhawk_servo_channel: int = 9,
     ):
         self._servo_pin = servo_pin
         self._release_angle = release_angle
         self._lock_angle = lock_angle
         self._drop_altitude = drop_altitude
         self._approach_radius = approach_radius
+        self._mavlink = mavlink_interface
+        self._pixhawk_servo_channel = pixhawk_servo_channel
 
         self._state = DeliveryState.IDLE
         self._target_lat = 0.0
@@ -66,7 +70,11 @@ class DeliveryService:
         self._payload_loaded = True
         self._release_time = 0.0
 
-        logger.info("DeliveryService initialized (servo GPIO %d)", servo_pin)
+        logger.info(
+            "DeliveryService initialized (GPIO pin: %d, Pixhawk servo ch: %d)",
+            servo_pin,
+            pixhawk_servo_channel,
+        )
 
     @property
     def state(self) -> DeliveryState:
@@ -113,22 +121,40 @@ class DeliveryService:
         self._state = DeliveryState.NAVIGATING
         logger.info("Delivery mission to person #%d", track_id)
 
-    def release_payload(self) -> bool:
-        """Release the payload."""
+    async def release_payload(self) -> bool:
+        """Release the payload via Pixhawk AUX servo and/or direct GPIO."""
         if not self._payload_loaded:
             logger.warning("No payload loaded")
             return False
 
+        released = False
+
+        # 1. Trigger via Pixhawk 2.4.8 AUX1 MAVLink servo command
+        if self._mavlink and getattr(self._mavlink, "is_connected", False):
+            try:
+                # 2000 us = release PWM
+                await self._mavlink.set_servo(self._pixhawk_servo_channel, 2000)
+                logger.info("Sent MAVLink DO_SET_SERVO release on channel %d", self._pixhawk_servo_channel)
+                released = True
+            except Exception as mav_err:
+                logger.error("MAVLink servo release error: %s", mav_err)
+
+        # 2. Trigger via Pi GPIO servo (if initialized)
         if self._servo_initialized:
             self._set_servo_angle(self._release_angle)
             time.sleep(1.0)  # Wait for servo to actuate
             self._set_servo_angle(self._lock_angle)
+            released = True
 
-        self._payload_loaded = False
-        self._release_time = time.time()
-        self._state = DeliveryState.CONFIRMING
-        logger.info("✅ Payload released")
-        return True
+        if released or not self._servo_initialized:
+            self._payload_loaded = False
+            self._release_time = time.time()
+            self._state = DeliveryState.CONFIRMING
+            logger.info("✅ Payload released successfully")
+            return True
+        else:
+            logger.error("❌ Failed to actuate release mechanism")
+            return False
 
     def cancel(self):
         """Cancel current delivery mission."""

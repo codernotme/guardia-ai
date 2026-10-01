@@ -1,4 +1,4 @@
-# Guardia AI v2.0.1 — Autonomous Drone Surveillance & Rescue System
+# Guardia AI v2.0.0 — Autonomous Drone Surveillance & Rescue System
 
 <p align="center">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=26&pause=1000&color=FF6B35&center=true&vCenter=true&width=920&lines=Autonomous+Surveillance+%26+Rescue+Drone;Pixhawk+%2B+Raspberry+Pi+4B+%2B+Offline+AI;Track+%7C+Tail+%7C+Deliver+%7C+Rescue" alt="Guardia AI v2 banner" />
@@ -74,7 +74,7 @@ Guardia AI v2 is a **fully autonomous drone system** designed for:
 ## Directory Structure
 
 ```
-v2.0.1/
+v2.0.0/
 ├── drone/                    # All onboard (Pi 4B) software
 │   ├── core/                 # Core drone agent, state machine, config
 │   ├── ai/                   # AI models, tracking, inference engine
@@ -119,17 +119,17 @@ v2.0.1/
 
 ```bash
 # On Raspberry Pi 4B
-cd v2.0.1/drone
+cd v2.0.0/drone
 pip install -r requirements.txt
 python -m core.agent
 
 # On GCS machine (laptop/PC)
-cd v2.0.1/gcs/backend
+cd v2.0.0/gcs/backend
 pip install -r requirements.txt
 python main.py
 
 # For model training/export
-# Open v2.0.1/colab/*.ipynb in Google Colab
+# Open v2.0.0/colab/*.ipynb in Google Colab
 ```
 
 ---

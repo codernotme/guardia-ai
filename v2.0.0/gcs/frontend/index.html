@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guardia AI v2.0.0 — Tactical Ground Control Station</title>
+  <meta name="description" content="Autonomous follow and surveillance drone ground control station for Pixhawk 2.4.8 and Raspberry Pi 4B.">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Header Banner -->
+  <header class="hud-header">
+    <div class="hud-title-cluster">
+      <h1 class="hud-callsign">GUARDIA AI v2.0.0</h1>
+      <span id="hud-link-pill" class="hud-pill hud-pill--neutral">CONNECTING...</span>
+      <span id="hud-arm-pill" class="hud-pill hud-pill--neutral">DISARMED</span>
+      <span id="val-flight-mode" class="hud-pill hud-pill--connected">STANDBY</span>
+    </div>
+
+    <div class="hud-metrics-bar">
+      <div class="hud-metric-item">
+        <span class="hud-metric-label">Altitude</span>
+        <span id="val-alt" class="hud-metric-value">0.0m</span>
+      </div>
+      <div class="hud-metric-item">
+        <span class="hud-metric-label">Groundspeed</span>
+        <span id="val-speed" class="hud-metric-value">0.0m/s</span>
+      </div>
+      <div class="hud-metric-item">
+        <span class="hud-metric-label">Battery (4S)</span>
+        <span id="val-battery" class="hud-metric-value">0.0V (0%)</span>
+      </div>
+      <div class="hud-metric-item">
+        <span class="hud-metric-label">GNSS Fix</span>
+        <span id="val-gps" class="hud-metric-value">0 SATS (Fix 0)</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main HUD Layout -->
+  <main class="hud-main-grid">
+    <!-- Left Panel: Flight Controls & Commands -->
+    <aside class="hud-panel" aria-label="Flight Controls">
+      <div class="hud-panel-title">Autonomous Mission Control</div>
+      <div class="hud-controls-grid">
+        <button id="btn-arm" class="hud-btn hud-btn--primary">Arm Motors</button>
+        <button id="btn-takeoff" class="hud-btn">Takeoff (10m)</button>
+        <button id="btn-hold" class="hud-btn">Hold / Loiter</button>
+        <button id="btn-follow" class="hud-btn hud-btn--primary">Follow Person</button>
+        <button id="btn-deliver" class="hud-btn">Drop Payload</button>
+        <button id="btn-rtl" class="hud-btn">Return Home (RTL)</button>
+        <button id="btn-kill" class="hud-btn hud-btn--danger">Emergency Motor Kill</button>
+      </div>
+
+      <div class="hud-panel-title">Pixhawk 2.4.8 Hardware</div>
+      <div style="font-size: 11px; color: var(--color-hud-dim); display: flex; flex-direction: column; gap: 4px;">
+        <div>Firmware: ArduCopter 4.4+ (fmuv3)</div>
+        <div>MCU: STM32F427 @ 168MHz (2MB Flash)</div>
+        <div>Link: /dev/ttyACM0 @ 921600 baud</div>
+        <div>Payload Servo: AUX OUT 1 (CH9)</div>
+        <div>Mode: Zero-Telemetry (Offline Edge)</div>
+      </div>
+    </aside>
+
+    <!-- Center Viewport: Video & Synthetic Horizon HUD -->
+    <section class="hud-viewport-container" aria-label="Perception HUD">
+      <!-- Background Video Canvas or Simulation Stream -->
+      <canvas id="hud-video-canvas" class="hud-video-canvas" width="1280" height="720"></canvas>
+
+      <!-- Synthetic HUD Overlay Layer -->
+      <div class="hud-overlay-layer">
+        <!-- Target Bounding Box Reticles Layer -->
+        <div id="hud-reticle-layer" style="position: absolute; inset: 0;"></div>
+
+        <!-- Artificial Horizon Instrument -->
+        <div class="hud-artificial-horizon">
+          <div id="hud-pitch-ladder" class="hud-pitch-ladder"></div>
+          <div class="hud-waterline"></div>
+          <div class="hud-crosshair-center"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Panel: Telemetry & Blackbox Stream -->
+    <aside class="hud-panel" aria-label="Event Log and Diagnostics">
+      <div class="hud-panel-title">Blackbox System Events</div>
+      <ul id="hud-log-stream" class="hud-log-stream">
+        <li class="hud-log-entry">
+          <span class="hud-log-time">[BOOT]</span>
+          <span>Guardia AI v2.0.0 local GCS initialized.</span>
+        </li>
+      </ul>
+    </aside>
+  </main>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

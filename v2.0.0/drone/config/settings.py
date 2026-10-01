@@ -1,5 +1,5 @@
 """
-Guardia AI v2.0.1 — Drone Configuration
+Guardia AI v2.0.0 — Drone Configuration
 ========================================
 All hardware, AI, flight, and system parameters.
 Tuned for Raspberry Pi 4B (8GB RAM) with Pixhawk FC.
@@ -16,9 +16,15 @@ from pathlib import Path
 @dataclass(frozen=False)
 class HardwareConfig:
     """Physical hardware parameters."""
-    # --- Pixhawk UART ---
-    pixhawk_serial_port: str = "/dev/serial0"
+    # --- Pixhawk 2.4.8 (STM32F427 2MB Flash) ---
+    pixhawk_model: str = "pixhawk_2_4_8"
+    pixhawk_serial_port: str = "/dev/ttyACM0"  # USB or /dev/serial0 (TELEM2 UART)
+    pixhawk_fallback_ports: tuple = ("/dev/ttyACM0", "/dev/serial0", "/dev/ttyAMA0", "/dev/ttyUSB0")
     pixhawk_baud_rate: int = 921600
+    pixhawk_fallback_bauds: tuple = (921600, 115200, 57600)
+    pixhawk_firmware: str = "ardupilot"  # "ardupilot" (fmuv3 Guided mode) or "px4" (fmu-v3 Offboard)
+    pixhawk_servo_channel: int = 9  # AUX1 on Pixhawk 2.4.8 (RC9 / SERVO9)
+    delivery_use_mavlink_servo: bool = True
     mavlink_system_id: int = 1
     mavlink_component_id: int = 191  # MAV_COMP_ID_ONBOARD_COMPUTER
 
@@ -30,7 +36,7 @@ class HardwareConfig:
     camera_hflip: bool = False
     camera_vflip: bool = False
 
-    # --- GPS ---
+    # --- GPS (u-blox NEO-M8N on Pixhawk GPS Port) ---
     gps_port: str = ""  # Empty = Pixhawk handles GPS
     gps_baud: int = 38400
 
@@ -39,10 +45,10 @@ class HardwareConfig:
     modem_device: str = "/dev/ttyUSB2"
     modem_apn: str = "jionet"
 
-    # --- Power ---
+    # --- Power (4S LiPo with 3DR Power Module) ---
     battery_cells: int = 4  # 4S LiPo
-    battery_low_voltage: float = 3.5  # Per cell
-    battery_critical_voltage: float = 3.3  # Per cell
+    battery_low_voltage: float = 3.5  # Per cell (14.0V total)
+    battery_critical_voltage: float = 3.3  # Per cell (13.2V total)
     battery_capacity_mah: int = 5200
 
 
