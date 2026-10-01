@@ -89,67 +89,28 @@ connection = mavutil.mavlink_connection("udpin:0.0.0.0:14550")
 
 ---
 
-## Frontend (To Build)
+## Frontend Options
 
-### Technology Stack
-- **Next.js 14+** with App Router
-- **TypeScript**
-- **MapLibre GL** for map
-- **WebSocket** for real-time telemetry
-- **WebRTC** for live video
+### Option 1: Built-in Offline Tactical HUD (Recommended for Field Ops)
+Located in [`v2.0.0/gcs/frontend/`](file:///run/media/codernotme/coderlogs/Tackle%20Studio%27s%20Projects/Personal/guardia-ai/v2.0.0/gcs/frontend):
+- Technology: Vanilla HTML5, CSS3, JavaScript (no Node.js or bundler required on the drone).
+- Serving: automatically mounted by FastAPI backend on `/` (`http://192.168.4.1:8000`).
+- Features:
+  - Real-time artificial horizon (pitch ladder and roll indicator).
+  - Target tracking reticle overlay with class name, confidence, and distance.
+  - One-click flight controls: Arm, Takeoff (10m), Hold/Loiter, Follow Person, Drop Payload, Return Home (RTL), Emergency Kill.
+  - Live blackbox event stream log.
+  - Fully responsive across smartphone (375px), field tablet (768px), and laptop (1440px).
 
-### Page Layout
-
-```
-┌─────────────────────────────────────────────────────┐
-│ [Logo] Guardia GCS    [Status: CONNECTED]  [User]   │
-├────────┬────────────────────────────────────────────┤
-│        │                                             │
-│  HUD   │            MAP                              │
-│        │        (drone position,                     │
-│ Speed  │         waypoints,                          │
-│ Alt    │         geofence)                           │
-│ Batt   │                                             │
-│ GPS    │                                             │
-│ Mode   │                                             │
-│        │                                             │
-├────────┼────────────────────────────────────────────┤
-│        │                                             │
-│ VIDEO  │     CONTROLS                                │
-│ (live  │   [ARM] [TAKEOFF] [LAND] [RTL] [HOLD]     │
-│  feed) │   [FOLLOW] [PATROL] [SEARCH] [DELIVER]    │
-│        │                                             │
-│        │     DETECTIONS                              │
-│        │   Target #1: person (0.87)                  │
-│        │   Target #2: person (0.72)                  │
-│        │   [Click to follow]                         │
-│        │                                             │
-├────────┴────────────────────────────────────────────┤
-│ Link: 45ms │ Loss: 0.1% │ Signal: -65dBm │ FPS: 28 │
-└─────────────────────────────────────────────────────┘
-```
-
-### Frontend Init Commands
+### Option 2: Extended Desktop Station (Optional Next.js Build)
+For multi-monitor base stations requiring heavy vector map GIS overlays:
+- Stack: Next.js 14+ App Router, MapLibre GL, Recharts.
+- Init command:
 ```bash
-cd v2.0.0/gcs/frontend
+cd v2.0.0/gcs/frontend-next
 npx -y create-next-app@latest ./ --typescript --app --src-dir --no-tailwind --eslint --no-import-alias
 npm install maplibre-gl recharts
 ```
-
-### Key Components to Build
-
-| Component | Priority | Description |
-|---|---|---|
-| `TelemetryHUD` | P0 | Speed, altitude, battery, GPS, mode |
-| `DroneMap` | P0 | MapLibre with drone marker and heading |
-| `CommandPanel` | P0 | Buttons for arm, takeoff, land, RTL |
-| `VideoPlayer` | P1 | WebRTC/WHEP live video |
-| `DetectionList` | P1 | List of tracked targets with "follow" button |
-| `MissionPlanner` | P2 | Draw waypoints on map |
-| `FlightLog` | P2 | Historical telemetry viewer |
-| `GeofenceDrawer` | P2 | Draw geofence on map |
-| `LinkHealth` | P0 | RTT, packet loss, signal strength |
-| `PreflightChecklist` | P1 | Interactive checklist before flight |
 
 ---
 
