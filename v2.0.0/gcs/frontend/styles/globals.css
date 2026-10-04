@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@heroui/styles";
+@import "leaflet/dist/leaflet.css";
 
 /*
  * HeroUI Theme Customization
@@ -96,5 +97,90 @@
 
 @theme {
 	--font-sans: var(--font-bricolage-grotesque), sans-serif;
-	--font-mono: "monospace", monospace;
+	--font-mono: "Fira Code", monospace;
+}
+
+/* ========================================
+   Custom Scrollbar (Dark Tactical Theme)
+   ======================================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* ========================================
+   Leaflet Map Icon Override
+   ======================================== */
+.drone-leaflet-icon {
+  background: none !important;
+  border: none !important;
+}
+
+/* Fix leaflet container rendering */
+.leaflet-container {
+  background: var(--background);
+  font-family: inherit;
+}
+
+/* ========================================
+   Utility Animations
+   ======================================== */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+/* Smooth entrance animations */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-from-top {
+  from { transform: translateY(-4px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-in {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: forwards;
+}
+
+.fade-in {
+  animation-name: fade-in;
+}
+
+.slide-in-from-top-1 {
+  animation-name: slide-in-from-top;
+}
+
+/* ========================================
+   Selection & Focus States
+   ======================================== */
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
