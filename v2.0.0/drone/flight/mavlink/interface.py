@@ -77,6 +77,10 @@ class TelemetryData:
     last_attitude: float = 0.0
     last_battery: float = 0.0
 
+    # RC and Status Messages
+    rc_channels: list = None
+    statustext: str = ""
+
 
 class MAVLinkInterface:
     """
@@ -145,6 +149,7 @@ class MAVLinkInterface:
         # Callbacks
         self._heartbeat_callback: Optional[Callable] = None
         self._telemetry_callback: Optional[Callable] = None
+        self._disconnect_callback: Optional[Callable] = None
 
         # Setpoint tracking
         self._last_setpoint_time = 0.0
@@ -164,53 +169,74 @@ class MAVLinkInterface:
     def on_telemetry(self, callback: Callable):
         self._telemetry_callback = callback
 
+    def on_disconnect(self, callback: Callable):
+        self._disconnect_callback = callback
+
     async def connect(self) -> bool:
         """Connect to Pixhawk via serial port with auto-probe fallbacks."""
         try:
             from pymavlink import mavutil
             import os
 
-            # Candidate ports for Pixhawk 2.4.8
+            # Candidate ports for Pixhawk 2.4.8 (cross-platform)
             candidate_ports = [self._port]
+            
+            # Detect Windows COM ports if on Windows
+            try:
+                import serial.tools.list_ports as lp
+                for p in lp.comports():
+                    if p.device not in candidate_ports:
+                        candidate_ports.append(p.device)
+            except Exception:
+                pass
+
             for p in ["/dev/ttyACM0", "/dev/serial0", "/dev/ttyAMA0", "/dev/ttyUSB0"]:
                 if p not in candidate_ports and os.path.exists(p):
                     candidate_ports.append(p)
 
+            bauds_to_try = [self._baud]
+            for b in [115200, 57600, 921600]:
+                if b not in bauds_to_try:
+                    bauds_to_try.append(b)
+
             for port in candidate_ports:
-                logger.info("Attempting Pixhawk 2.4.8 connection on: %s @ %d baud", port, self._baud)
-                try:
-                    self._connection = mavutil.mavlink_connection(
-                        port,
-                        baud=self._baud,
-                        source_system=self._source_system,
-                        source_component=self._source_component,
-                    )
-
-                    # Wait for heartbeat
-                    logger.info("Waiting for Pixhawk heartbeat on %s...", port)
-                    msg = self._connection.wait_heartbeat(timeout=3)
-
-                    if msg:
-                        self._port = port
-                        self._connected = True
-                        self._telemetry.last_heartbeat = time.monotonic()
-                        logger.info(
-                            "✅ Pixhawk 2.4.8 connected on %s | system=%d component=%d | firmware=%s",
+                for baud in bauds_to_try:
+                    logger.info("Attempting Pixhawk connection on: %s @ %d baud", port, baud)
+                    try:
+                        self._connection = mavutil.mavlink_connection(
                             port,
-                            self._connection.target_system,
-                            self._connection.target_component,
-                            self._firmware,
+                            baud=baud,
+                            source_system=self._source_system,
+                            source_component=self._source_component,
                         )
 
-                        # Request data streams
-                        self._request_data_streams()
-                        return True
-                    else:
-                        logger.warning("No heartbeat on %s within 3s", port)
-                        if self._connection:
-                            self._connection.close()
-                except Exception as port_err:
-                    logger.warning("Failed connecting on %s: %s", port, port_err)
+                        # Wait for heartbeat
+                        msg = self._connection.wait_heartbeat(timeout=1.5)
+                        if msg:
+                            self._port = port
+                            self._baud = baud
+                            self._connected = True
+                            self._telemetry.last_heartbeat = time.monotonic()
+                            if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
+                                self._firmware = "ardupilot"
+                            elif msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_PX4:
+                                self._firmware = "px4"
+
+                            logger.info(
+                                "✅ Pixhawk connected on %s @ %d | sys=%d comp=%d | fw=%s",
+                                port,
+                                baud,
+                                self._connection.target_system,
+                                self._connection.target_component,
+                                self._firmware,
+                            )
+                            self._request_data_streams()
+                            return True
+                        else:
+                            if self._connection:
+                                self._connection.close()
+                    except Exception as port_err:
+                        pass
 
             logger.error("❌ Failed to connect to Pixhawk 2.4.8 on all candidate ports: %s", candidate_ports)
             return False
@@ -254,15 +280,55 @@ class MAVLinkInterface:
                     self._process_message(msg)
                 else:
                     await asyncio.sleep(0.001)  # 1ms sleep if no message
+            except (OSError, PermissionError) as e:
+                # Fatal serial disconnect (e.g. ClearCommError, USB unplugged)
+                logger.warning("🔌 Pixhawk serial link lost: %s", e)
+                self._connected = False
+                self._running = False
+                if self._connection:
+                    try:
+                        self._connection.close()
+                    except Exception:
+                        pass
+                    self._connection = None
+                if self._disconnect_callback:
+                    try:
+                        self._disconnect_callback(str(e))
+                    except Exception:
+                        pass
+                break
             except Exception as e:
-                logger.error("MAVLink receive error: %s", e)
-                await asyncio.sleep(0.1)
+                err_str = str(e)
+                if any(w in err_str.lower() for w in ["clearcommerror", "not recognize the command", "bad file descriptor", "handle is invalid"]):
+                    logger.warning("🔌 Pixhawk serial disconnected: %s", err_str)
+                    self._connected = False
+                    self._running = False
+                    if self._connection:
+                        try:
+                            self._connection.close()
+                        except Exception:
+                            pass
+                        self._connection = None
+                    if self._disconnect_callback:
+                        try:
+                            self._disconnect_callback(err_str)
+                        except Exception:
+                            pass
+                    break
+                else:
+                    logger.error("MAVLink receive error: %s", e)
+                    await asyncio.sleep(0.2)
 
     def _process_message(self, msg):
         """Process incoming MAVLink message."""
         msg_type = msg.get_type()
 
         if msg_type == "HEARTBEAT":
+            from pymavlink import mavutil
+            if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
+                self._firmware = "ardupilot"
+            elif msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_PX4:
+                self._firmware = "px4"
             self._telemetry.last_heartbeat = time.monotonic()
             self._telemetry.armed = (msg.base_mode & 128) != 0
             self._telemetry.system_status = msg.system_status
@@ -309,6 +375,14 @@ class MAVLinkInterface:
             self._telemetry.home_lon = msg.longitude / 1e7
             self._telemetry.home_alt = msg.altitude / 1000.0
 
+        elif msg_type == "RC_CHANNELS":
+            self._telemetry.rc_channels = [
+                getattr(msg, f"chan{i}_raw", 1500) for i in range(1, 9)
+            ]
+
+        elif msg_type == "STATUSTEXT":
+            self._telemetry.statustext = msg.text
+
         if self._telemetry_callback:
             self._telemetry_callback(msg_type, self._telemetry)
 
@@ -335,10 +409,10 @@ class MAVLinkInterface:
     # Commands
     # ------------------------------------------------------------------
 
-    async def arm(self) -> bool:
-        """Arm the vehicle."""
+    async def arm(self) -> Tuple[bool, str]:
+        """Arm the vehicle. Returns (success, reason)."""
         if not self._connected:
-            return False
+            return False, "Pixhawk not connected"
 
         from pymavlink import mavutil
 
@@ -351,13 +425,27 @@ class MAVLinkInterface:
             0, 0, 0, 0, 0, 0,
         )
 
-        # Wait for ACK
-        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        if ack and ack.result == 0:
-            logger.info("✅ Armed")
-            return True
-        logger.warning("❌ Arm failed: %s", ack)
-        return False
+        arm_errors = []
+        t_start = time.monotonic()
+        while time.monotonic() - t_start < 3.0:
+            msg = self._connection.recv_match(type=["COMMAND_ACK", "STATUSTEXT"], blocking=True, timeout=0.8)
+            if msg:
+                if msg.get_type() == "STATUSTEXT":
+                    self._telemetry.statustext = msg.text
+                    txt = msg.text.strip()
+                    if any(w in txt.lower() for w in ["arm", "prearm", "calibrat", "compass", "accel", "battery", "flash", "failsafe"]):
+                        if "decoding" not in txt.lower():
+                            arm_errors.append(txt)
+                elif msg.get_type() == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                    if msg.result == 0:
+                        logger.info("✅ Armed")
+                        return True, "Armed"
+                    else:
+                        error_detail = "; ".join(arm_errors) if arm_errors else (self._telemetry.statustext if "decoding" not in self._telemetry.statustext else "PreArm checks failed")
+                        logger.warning("❌ Arm failed: %s (ACK %d)", error_detail, msg.result)
+                        return False, error_detail
+
+        return False, "; ".join(arm_errors) if arm_errors else "Arm timeout"
 
     async def disarm(self) -> bool:
         """Disarm the vehicle."""
@@ -542,6 +630,78 @@ class MAVLinkInterface:
             0, 0,
         )
 
+    async def send_step_nudge(self, axis: str, distance_m: float = 0.3048) -> bool:
+        """
+        Command a relative step movement in the body frame.
+        Useful for precise 1cm / 1ft nudges from the GCS.
+
+        Args:
+            axis: 'up', 'down', 'forward', 'backward', 'left', 'right', 'yaw_left', 'yaw_right'
+            distance_m: distance in meters (e.g. 0.01 for 1cm, 0.3048 for 1ft)
+        """
+        if not self._connected:
+            logger.warning("Cannot send step: not connected to Pixhawk")
+            return False
+
+        from pymavlink import mavutil
+
+        # Ensure vehicle is in GUIDED mode for manual GCS nudges
+        if self._telemetry.flight_mode not in ["GUIDED", "OFFBOARD"]:
+            logger.info("Switching to GUIDED mode for step movement")
+            await self.set_mode("GUIDED" if self._firmware != "px4" else "OFFBOARD")
+            await asyncio.sleep(0.2)
+
+        axis = axis.lower().strip()
+        dx, dy, dz = 0.0, 0.0, 0.0
+
+        if axis == "up":
+            # NED: negative Z is up
+            dz = -abs(distance_m)
+        elif axis == "down":
+            dz = abs(distance_m)
+        elif axis == "forward":
+            dx = abs(distance_m)
+        elif axis == "backward":
+            dx = -abs(distance_m)
+        elif axis == "left":
+            dy = -abs(distance_m)
+        elif axis == "right":
+            dy = abs(distance_m)
+        elif axis in ["yaw_left", "yaw_right"]:
+            angle_deg = 15.0 if axis == "yaw_right" else -15.0
+            self._connection.mav.command_long_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                mavutil.mavlink.MAV_CMD_CONDITION_YAW,
+                0,
+                abs(angle_deg),
+                20.0,  # 20 deg/s
+                1 if angle_deg > 0 else -1,
+                1,     # Relative offset
+                0, 0, 0
+            )
+            return True
+        else:
+            logger.error("Unknown step axis: %s", axis)
+            return False
+
+        # Send SET_POSITION_TARGET_LOCAL_NED with MAV_FRAME_BODY_OFFSET_NED
+        type_mask = 0b0000_1111_1111_1000
+
+        self._connection.mav.set_position_target_local_ned_send(
+            0,  # time_boot_ms
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
+            type_mask,
+            dx, dy, dz,
+            0, 0, 0,
+            0, 0, 0,
+            0, 0
+        )
+        logger.info("Sent step nudge: axis=%s, distance=%.4fm (dx=%.4f, dy=%.4f, dz=%.4f)", axis, distance_m, dx, dy, dz)
+        return True
+
     def get_distance_to_home(self) -> float:
         """Calculate distance from current position to home (meters)."""
         if self._telemetry.home_lat == 0:
@@ -611,7 +771,59 @@ class MAVLinkInterface:
             action,
             0, 0, 0, 0, 0,
         )
-        return True
+    async def motor_test(
+        self,
+        motor_instance: int = 1,
+        throttle_pct: float = 10.0,
+        timeout_sec: float = 2.0,
+        motor_count: int = 1,
+    ) -> Tuple[bool, str]:
+        """
+        Spin motor for bench testing without flight.
+        Uses MAV_CMD_DO_MOTOR_TEST.
+
+        Args:
+            motor_instance: Motor index (1 = Front-Right, 2 = Rear-Right, 3 = Rear-Left, 4 = Front-Left)
+            throttle_pct: Throttle percentage (1% to 40% safe limit)
+            timeout_sec: Duration in seconds (0.5s to 10s)
+            motor_count: 1 for single motor, or 4 for all motors in sequence
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        # Clamp throttle to safe limits (0 to 40%)
+        throttle_pct = max(0.0, min(40.0, float(throttle_pct)))
+        timeout_sec = max(0.0, min(10.0, float(timeout_sec)))
+
+        logger.info(
+            "Running Motor Test: motor=%d, throttle=%.1f%%, duration=%.1fs, count=%d",
+            motor_instance, throttle_pct, timeout_sec, motor_count
+        )
+
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST,
+            0,  # confirmation
+            motor_instance,  # param1: Motor instance (1-8)
+            0,               # param2: Throttle type (0 = percent 0-100)
+            throttle_pct,    # param3: Throttle value
+            timeout_sec,     # param4: Timeout in seconds
+            motor_count,     # param5: Motor count (1=single, 4=sequence)
+            0,               # param6: Motor test order (0 = default)
+            0,
+        )
+
+        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=2.0)
+        if ack and ack.result == 0:
+            target_desc = f"All 4 motors in sequence" if motor_count > 1 else f"Motor {motor_instance}"
+            return True, f"{target_desc} spinning at {throttle_pct:.0f}% for {timeout_sec:.1f}s"
+        elif ack:
+            return False, f"Motor test rejected by flight controller (ACK {ack.result})"
+        else:
+            return False, "Motor test command dispatched"
 
     async def disconnect(self):
         """Close the MAVLink connection."""
