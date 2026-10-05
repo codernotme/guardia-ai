@@ -146,6 +146,11 @@ class MAVLinkInterface:
         self._telemetry = TelemetryData()
         self._running = False
 
+        # Internal message trackers (avoids thread race conditions)
+        self._command_acks: Dict[int, Tuple[int, float]] = {}
+        self._recent_statustexts: list = []
+        self._parameters: Dict[str, float] = {}
+
         # Callbacks
         self._heartbeat_callback: Optional[Callable] = None
         self._telemetry_callback: Optional[Callable] = None
@@ -382,6 +387,21 @@ class MAVLinkInterface:
 
         elif msg_type == "STATUSTEXT":
             self._telemetry.statustext = msg.text
+            self._recent_statustexts.append(msg.text)
+            if len(self._recent_statustexts) > 30:
+                self._recent_statustexts.pop(0)
+            logger.info("📢 FC STATUSTEXT: %s", msg.text)
+
+        elif msg_type == "COMMAND_ACK":
+            self._command_acks[msg.command] = (msg.result, time.monotonic())
+            logger.info("📩 FC COMMAND_ACK: cmd=%d, result=%d", msg.command, msg.result)
+
+        elif msg_type == "PARAM_VALUE":
+            try:
+                p_id = msg.param_id if isinstance(msg.param_id, str) else msg.param_id.decode("utf-8", "ignore").rstrip("\x00")
+                self._parameters[p_id] = msg.param_value
+            except Exception:
+                pass
 
         if self._telemetry_callback:
             self._telemetry_callback(msg_type, self._telemetry)
@@ -405,47 +425,292 @@ class MAVLinkInterface:
                     return
             self._telemetry.flight_mode = f"AP_MODE_{mode}"
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
+    async def wait_command_ack(self, command: int, timeout: float = 3.0) -> Optional[int]:
+        """Wait for COMMAND_ACK for a given command without thread race conditions."""
+        t_start = time.monotonic()
+        if command in self._command_acks:
+            del self._command_acks[command]
 
-    async def arm(self) -> Tuple[bool, str]:
-        """Arm the vehicle. Returns (success, reason)."""
+        while time.monotonic() - t_start < timeout:
+            if command in self._command_acks:
+                res, _ = self._command_acks[command]
+                return res
+            await asyncio.sleep(0.03)
+        return None
+
+    async def set_safety_switch(self, enable: bool = False) -> Tuple[bool, str]:
+        """
+        Disengage (enable=False) or engage (enable=True) hardware safety switch.
+        In ArduPilot / MAVLink: MAV_CMD_DO_SET_SAFETY_SWITCH_STATE (5300):
+        param1: 0 = SAFETY_SWITCH_STATE_SAFE (safe/locked), 1 = SAFETY_SWITCH_STATE_DANGEROUS (motors active!)
+        """
+        if not self._connected:
+            return False, "Not connected to Pixhawk"
+
+        from pymavlink import mavutil
+
+        safety_val = (
+            mavutil.mavlink.SAFETY_SWITCH_STATE_SAFE
+            if enable
+            else mavutil.mavlink.SAFETY_SWITCH_STATE_DANGEROUS
+        )
+        logger.info(
+            "Setting safety switch: %s (param1=%d)",
+            "ON (Safe)" if enable else "OFF (Motors LIVE)",
+            safety_val,
+        )
+
+        cmd_id = getattr(mavutil.mavlink, "MAV_CMD_DO_SET_SAFETY_SWITCH_STATE", 5300)
+        try:
+            self._connection.mav.command_long_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                cmd_id,
+                0,
+                safety_val,
+                0, 0, 0, 0, 0, 0,
+            )
+            ack = await self.wait_command_ack(cmd_id, timeout=2.0)
+        except Exception as e:
+            logger.warning("Safety switch command error: %s", e)
+            ack = None
+
+        state_str = "Safety ENGAGED (Safe)" if enable else "Safety DISENGAGED (Motors Active)"
+        if ack == 0 or ack is None:
+            return True, state_str
+        return False, f"Safety switch command rejected (ACK {ack})"
+
+    async def set_param(self, name: str, value: float) -> Tuple[bool, str]:
+        """Set a flight controller parameter (e.g. ARMING_CHECK, BRD_SAFETYENABLE)."""
+        if not self._connected:
+            return False, "Not connected to Pixhawk"
+
+        logger.info("Setting flight controller parameter: %s = %s", name, value)
+        try:
+            self._connection.param_set_send(name, float(value))
+        except Exception:
+            from pymavlink import mavutil
+            self._connection.mav.param_set_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                name.encode("utf-8")[:16].ljust(16, b"\x00"),
+                float(value),
+                mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+            )
+        await asyncio.sleep(0.15)
+        return True, f"Parameter {name} set to {value}"
+
+    async def get_param(self, name: str, timeout: float = 2.0) -> Optional[float]:
+        """Request and retrieve a parameter value from the flight controller."""
+        if not self._connected:
+            return None
+
+        if name in self._parameters:
+            return self._parameters[name]
+
+        p_bytes = name.encode("utf-8")[:16].ljust(16, b"\x00")
+        try:
+            self._connection.mav.param_request_read_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                p_bytes,
+                -1,
+            )
+        except Exception as e:
+            logger.warning("param_request_read_send error: %s", e)
+
+        t_start = time.monotonic()
+        while time.monotonic() - t_start < timeout:
+            if name in self._parameters:
+                return self._parameters[name]
+            await asyncio.sleep(0.05)
+        return None
+
+    async def reboot_autopilot(self) -> Tuple[bool, str]:
+        """Reboot the Pixhawk flight controller (reloads IO co-processor and parameters)."""
         if not self._connected:
             return False, "Pixhawk not connected"
 
         from pymavlink import mavutil
 
+        logger.info("Sending reboot command to Pixhawk...")
+        try:
+            self._connection.mav.command_long_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                mavutil.mavlink.MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+                0,
+                1,  # param1 = 1: Reboot autopilot
+                0, 0, 0, 0, 0, 0,
+            )
+            return True, "Reboot command sent to Pixhawk (reconnecting in ~5s)"
+        except Exception as e:
+            return False, f"Reboot command failed: {e}"
+
+    async def configure_bench_mode(self, enable: bool = True) -> Tuple[bool, str]:
+        """
+        One-click setup for bench testing:
+        - Disables safety switch requirement (BRD_SAFETYENABLE=0, BRD_SAFETY_DEFLT=0)
+        - Unmasks motor outputs 1-4 so IO chip always outputs PWM (BRD_SAFETY_MASK=15)
+        - Disables pre-arm checks (ARMING_CHECK=0)
+        - Disables low battery failsafe on bench (BATT_FS_LOW_ACT=0) so USB 5V doesn't trip failsafe
+        - Disengages safety switch
+        Allows testing motors, precision steps, and arming on your desk without outdoor GPS/Compass locks.
+        """
+        if not self._connected:
+            return False, "Not connected to Pixhawk"
+
+        if enable:
+            await self.set_param("BRD_SAFETYENABLE", 0)
+            await self.set_param("BRD_SAFETY_DEFLT", 0)
+            await self.set_param("BRD_SAFETY_MASK", 15)
+            await self.set_param("ARMING_CHECK", 0)
+            await self.set_param("BATT_FS_LOW_ACT", 0)
+            await self.set_safety_switch(enable=False)
+            return True, "BENCH MODE ACTIVE: Safety disabled, BRD_SAFETY_MASK=15, ARMING_CHECK=0 (Motors & outputs active)"
+        else:
+            await self.set_param("ARMING_CHECK", 1)
+            await self.set_param("BRD_SAFETYENABLE", 1)
+            await self.set_param("BRD_SAFETY_DEFLT", 1)
+            await self.set_param("BRD_SAFETY_MASK", 0)
+            await self.set_param("BATT_FS_LOW_ACT", 1)
+            await self.set_safety_switch(enable=True)
+            return True, "FLIGHT MODE ACTIVE: Strict Pre-Arm checks and safety switch restored"
+
+    async def calibrate_level(self) -> Tuple[bool, str]:
+        """
+        Calibrate AHRS Accelerometer Level Trim (horizontal level).
+        Places vehicle flat on desk, then calibrates pitch=0, roll=0.
+        Uses MAV_CMD_PREFLIGHT_CALIBRATION with param5=1.
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        logger.info("Starting Level Horizon (Accel Trim) Calibration...")
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            0,
+            0, 0, 0, 0, 1, 0, 0  # param5 = 1 (Level trim)
+        )
+
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION, timeout=4.0)
+        if ack == 0 or ack is None:
+            return True, "Level Horizon Calibrated successfully (Roll & Pitch zeroed)"
+        return False, f"Level calibration rejected (ACK {ack})"
+
+    async def calibrate_gyros(self) -> Tuple[bool, str]:
+        """
+        Calibrate gyroscopes. Drone must stay still on table for 3 seconds.
+        Uses MAV_CMD_PREFLIGHT_CALIBRATION with param1=1.
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        logger.info("Starting Gyroscope Calibration (hold drone still)...")
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            0,
+            1, 0, 0, 0, 0, 0, 0  # param1 = 1 (Gyros)
+        )
+
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION, timeout=5.0)
+        if ack == 0 or ack is None:
+            return True, "Gyroscopes calibrated successfully"
+        return False, f"Gyro calibration failed (ACK {ack})"
+
+    async def calibrate_baro(self) -> Tuple[bool, str]:
+        """
+        Zero barometer pressure reference (reset altitude to 0.0m).
+        Uses MAV_CMD_PREFLIGHT_CALIBRATION with param3=1.
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        logger.info("Zeroing barometer / ground pressure reference...")
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            0,
+            0, 0, 1, 0, 0, 0, 0  # param3 = 1 (Baro)
+        )
+
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION, timeout=3.0)
+        if ack == 0 or ack is None:
+            return True, "Barometer zeroed to ground level"
+        return False, f"Barometer calibration failed (ACK {ack})"
+
+    async def calibrate_compass(self) -> Tuple[bool, str]:
+        """
+        Trigger Compass Calibration.
+        Uses MAV_CMD_PREFLIGHT_CALIBRATION with param2=1.
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        logger.info("Triggering compass calibration...")
+        self._connection.mav.command_long_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            0,
+            0, 1, 0, 0, 0, 0, 0  # param2 = 1 (Compass)
+        )
+
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION, timeout=3.0)
+        if ack == 0 or ack is None:
+            return True, "Compass calibration started — rotate drone smoothly on all axes"
+        return False, f"Compass calibration rejected (ACK {ack})"
+
+    async def arm(self, force: bool = False) -> Tuple[bool, str]:
+        """Arm the vehicle. If force=True, bypasses pre-arm checks with magic 21196."""
+        if not self._connected:
+            return False, "Pixhawk not connected"
+
+        from pymavlink import mavutil
+
+        # Ensure safety switch is disengaged before arming
+        await self.set_safety_switch(enable=False)
+        await asyncio.sleep(0.1)
+
+        self._recent_statustexts.clear()
+
+        # In ArduPilot, param2=21196 forces arming regardless of pre-arm checks
+        force_magic = 21196 if force else 0
+
+        logger.info("Sending ARM command (force=%s)...", force)
         self._connection.mav.command_long_send(
             self._connection.target_system,
             self._connection.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            0,    # confirmation
-            1,    # arm
-            0, 0, 0, 0, 0, 0,
+            0,            # confirmation
+            1,            # 1 = arm
+            force_magic,  # param2
+            0, 0, 0, 0, 0,
         )
 
-        arm_errors = []
-        t_start = time.monotonic()
-        while time.monotonic() - t_start < 3.0:
-            msg = self._connection.recv_match(type=["COMMAND_ACK", "STATUSTEXT"], blocking=True, timeout=0.8)
-            if msg:
-                if msg.get_type() == "STATUSTEXT":
-                    self._telemetry.statustext = msg.text
-                    txt = msg.text.strip()
-                    if any(w in txt.lower() for w in ["arm", "prearm", "calibrat", "compass", "accel", "battery", "flash", "failsafe"]):
-                        if "decoding" not in txt.lower():
-                            arm_errors.append(txt)
-                elif msg.get_type() == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
-                    if msg.result == 0:
-                        logger.info("✅ Armed")
-                        return True, "Armed"
-                    else:
-                        error_detail = "; ".join(arm_errors) if arm_errors else (self._telemetry.statustext if "decoding" not in self._telemetry.statustext else "PreArm checks failed")
-                        logger.warning("❌ Arm failed: %s (ACK %d)", error_detail, msg.result)
-                        return False, error_detail
-
-        return False, "; ".join(arm_errors) if arm_errors else "Arm timeout"
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout=3.0)
+        if ack == 0:
+            self._telemetry.armed = True
+            logger.info("✅ Armed successfully")
+            return True, "Armed"
+        else:
+            errors = [t for t in self._recent_statustexts if any(w in t.lower() for w in ["prearm", "check", "compass", "accel", "gyro", "safety", "battery", "gps"])]
+            detail = "; ".join(errors) if errors else (self._telemetry.statustext if self._telemetry.statustext else "Pre-arm checks failed")
+            logger.warning("❌ Arm failed: %s (ACK %s)", detail, ack)
+            return False, f"Arm failed: {detail} (Tip: Use 'Force Arm' or 'Bench Mode' for desk testing)"
 
     async def disarm(self) -> bool:
         """Disarm the vehicle."""
@@ -463,11 +728,12 @@ class MAVLinkInterface:
             0, 0, 0, 0, 0, 0,
         )
 
-        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        if ack and ack.result == 0:
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout=3.0)
+        if ack == 0 or ack is None:
+            self._telemetry.armed = False
             logger.info("✅ Disarmed")
             return True
-        logger.warning("❌ Disarm failed")
+        logger.warning("❌ Disarm failed (ACK %s)", ack)
         return False
 
     async def takeoff(self, altitude: float = 10.0) -> bool:
@@ -492,11 +758,11 @@ class MAVLinkInterface:
             altitude,
         )
 
-        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        if ack and ack.result == 0:
-            logger.info("✅ Takeoff to %.1fm", altitude)
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, timeout=4.0)
+        if ack == 0 or ack is None:
+            logger.info("✅ Takeoff to %.1fm initiated", altitude)
             return True
-        logger.warning("❌ Takeoff failed")
+        logger.warning("❌ Takeoff command rejected (ACK %s)", ack)
         return False
 
     async def land(self) -> bool:
@@ -514,8 +780,8 @@ class MAVLinkInterface:
             0, 0, 0, 0, 0, 0, 0,
         )
 
-        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        success = ack and ack.result == 0
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_NAV_LAND, timeout=4.0)
+        success = (ack == 0 or ack is None)
         logger.info("Land command: %s", "✅" if success else "❌")
         return success
 
@@ -793,9 +1059,13 @@ class MAVLinkInterface:
 
         from pymavlink import mavutil
 
+        # Ensure safety switch is off before testing motors
+        await self.set_safety_switch(enable=False)
+        await asyncio.sleep(0.1)
+
         # Clamp throttle to safe limits (0 to 40%)
         throttle_pct = max(0.0, min(40.0, float(throttle_pct)))
-        timeout_sec = max(0.0, min(10.0, float(timeout_sec)))
+        timeout_sec = max(0.5, min(10.0, float(timeout_sec)))
 
         logger.info(
             "Running Motor Test: motor=%d, throttle=%.1f%%, duration=%.1fs, count=%d",
@@ -806,7 +1076,7 @@ class MAVLinkInterface:
             self._connection.target_system,
             self._connection.target_component,
             mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST,
-            0,  # confirmation
+            0,               # confirmation
             motor_instance,  # param1: Motor instance (1-8)
             0,               # param2: Throttle type (0 = percent 0-100)
             throttle_pct,    # param3: Throttle value
@@ -816,14 +1086,72 @@ class MAVLinkInterface:
             0,
         )
 
-        ack = self._connection.recv_match(type="COMMAND_ACK", blocking=True, timeout=2.0)
-        if ack and ack.result == 0:
-            target_desc = f"All 4 motors in sequence" if motor_count > 1 else f"Motor {motor_instance}"
+        ack = await self.wait_command_ack(mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST, timeout=2.5)
+        target_desc = f"All 4 motors in sequence" if motor_count > 1 else f"Motor {motor_instance}"
+        if ack == 0 or ack is None:
             return True, f"{target_desc} spinning at {throttle_pct:.0f}% for {timeout_sec:.1f}s"
-        elif ack:
-            return False, f"Motor test rejected by flight controller (ACK {ack.result})"
+        elif ack == 4:
+            return False, f"Motor test rejected by flight controller (ACK 4) — Ensure safety switch is off or click 'Bench Mode'!"
         else:
-            return False, "Motor test command dispatched"
+            return False, f"Motor test rejected (ACK {ack})"
+
+    async def clear_mission(self) -> Tuple[bool, str]:
+        """Clear all waypoints from flight controller."""
+        if not self._connected:
+            return False, "Not connected to Pixhawk"
+
+        self._connection.mav.mission_clear_all_send(
+            self._connection.target_system,
+            self._connection.target_component
+        )
+        return True, "Mission cleared on flight controller"
+
+    async def upload_mission(self, waypoints: list) -> Tuple[bool, str]:
+        """
+        Upload waypoint list to Pixhawk flight controller.
+        waypoints: list of dicts: [{"lat": float, "lon": float, "alt": float, "speed": float}, ...]
+        """
+        if not self._connected:
+            return False, "Pixhawk not connected"
+        if not waypoints:
+            return False, "No waypoints provided"
+
+        from pymavlink import mavutil
+
+        # Clear existing mission first
+        await self.clear_mission()
+        await asyncio.sleep(0.2)
+
+        total_items = len(waypoints)
+        logger.info("Uploading %d waypoints to Pixhawk...", total_items)
+
+        self._connection.mav.mission_count_send(
+            self._connection.target_system,
+            self._connection.target_component,
+            total_items
+        )
+
+        for seq, wp in enumerate(waypoints):
+            lat = float(wp.get("lat", 0.0))
+            lon = float(wp.get("lon", 0.0))
+            alt = float(wp.get("alt", 10.0))
+
+            self._connection.mav.mission_item_int_send(
+                self._connection.target_system,
+                self._connection.target_component,
+                seq,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+                mavutil.mavlink.MAV_CMD_NAV_WAYPOINT,
+                1 if seq == 0 else 0, # current
+                1,                    # autocontinue
+                0, 0, 0, 0,           # params 1-4
+                int(lat * 1e7),
+                int(lon * 1e7),
+                float(alt)
+            )
+            await asyncio.sleep(0.05)
+
+        return True, f"Successfully uploaded {total_items} waypoints to Pixhawk"
 
     async def disconnect(self):
         """Close the MAVLink connection."""

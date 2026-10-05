@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { TelemetryData, TelemetryHistoryPoint, LogEntry, SerialPortInfo, CommandResult } from "@/types/telemetry";
+import {
+  TelemetryData,
+  TelemetryHistoryPoint,
+  LogEntry,
+  SerialPortInfo,
+  CommandResult,
+  WaypointItem,
+} from "@/types/telemetry";
 
 const DEFAULT_TELEMETRY: TelemetryData = {
   armed: false,
@@ -212,11 +219,105 @@ export function useTelemetry() {
   );
 
   // Motor Spin Test
+  // Motor Spin Test
   const testMotor = useCallback(
     (motor: number, throttle: number, duration: number) => {
       sendCommand("motor_test", { motor, throttle, duration });
     },
     [sendCommand]
+  );
+
+  // ArduPilot One-Click Auto Setup
+  const runArduPilotAutoSetup = useCallback(
+    async (profile: "bench" | "field" = "bench", calibrateSensors = true, rtlAltitude = 15.0): Promise<any> => {
+      addLog("INFO", `Executing ArduPilot Auto-Setup [${profile.toUpperCase()}]...`);
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/ardupilot/auto_setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile, calibrate_sensors: calibrateSensors, rtl_altitude_m: rtlAltitude }),
+        });
+        const d = await res.json();
+        addLog(d.ok ? "INFO" : "WARN", d.msg);
+        return d;
+      } catch (err) {
+        addLog("CRIT", `Auto-Setup request failed: ${err}`);
+        return { ok: false, msg: String(err) };
+      }
+    },
+    [addLog]
+  );
+
+  // Fetch ArduPilot Parameters
+  const fetchArduPilotParams = useCallback(async (): Promise<any[]> => {
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/ardupilot/params");
+      if (res.ok) {
+        const d = await res.json();
+        return d.params || [];
+      }
+    } catch (err) {
+      console.error("Fetch params failed", err);
+    }
+    return [];
+  }, []);
+
+  // Set ArduPilot Parameter
+  const setArduPilotParam = useCallback(
+    async (name: string, value: number): Promise<boolean> => {
+      addLog("INFO", `Writing param ${name} = ${value} to Pixhawk...`);
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/ardupilot/params/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, value }),
+        });
+        const d = await res.json();
+        addLog(d.ok ? "INFO" : "WARN", d.msg);
+        return d.ok;
+      } catch (err) {
+        addLog("CRIT", `Set param error: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
+  // Pre-Arm Sanity Readiness Check
+  const fetchPrearmCheck = useCallback(async (): Promise<any> => {
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/ardupilot/prearm_check");
+      if (res.ok) {
+        const d = await res.json();
+        return d.data;
+      }
+    } catch (err) {
+      console.error("Prearm check error", err);
+    }
+    return null;
+  }, []);
+
+  // Generate Autonomous Lawnmower Survey Waypoints
+  const generateSurveyWaypoints = useCallback(
+    async (polygon: [number, number][], altitude = 15.0, laneSpacing = 15.0): Promise<WaypointItem[]> => {
+      addLog("INFO", `Generating survey grid: ${laneSpacing}m lane spacing @ ${altitude}m...`);
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/mission/generate_survey", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ polygon, altitude, lane_spacing_m: laneSpacing }),
+        });
+        const d = await res.json();
+        if (d.ok && d.waypoints) {
+          addLog("INFO", `Generated ${d.count} survey waypoints`);
+          return d.waypoints;
+        }
+      } catch (err) {
+        addLog("CRIT", `Survey generation error: ${err}`);
+      }
+      return [];
+    },
+    [addLog]
   );
 
   return {
@@ -236,5 +337,10 @@ export function useTelemetry() {
     testMotor,
     fetchPorts,
     addLog,
+    runArduPilotAutoSetup,
+    fetchArduPilotParams,
+    setArduPilotParam,
+    fetchPrearmCheck,
+    generateSurveyWaypoints,
   };
 }

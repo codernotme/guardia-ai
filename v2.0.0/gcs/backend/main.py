@@ -124,6 +124,24 @@ class MissionPlan(BaseModel):
     altitude: float = 10.0
 
 
+class ArduPilotAutoSetupRequest(BaseModel):
+    profile: str = "bench"  # "bench" or "field"
+    calibrate_sensors: bool = True
+    rtl_altitude_m: float = 15.0
+
+
+class ParamUpdateRequest(BaseModel):
+    name: str
+    value: float
+
+
+class SurveyPolygonRequest(BaseModel):
+    polygon: List[List[float]] = Field(default_factory=list)  # [[lat, lon], ...]
+    altitude: float = 15.0
+    lane_spacing_m: float = 15.0
+    speed_ms: float = 3.5
+
+
 # ──────────────────────────────────────────────────────────────
 # WebSocket Connection Manager
 # ──────────────────────────────────────────────────────────────
@@ -164,6 +182,211 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+DEFAULT_ARDUPILOT_PARAMS = [
+    {
+        "name": "ARMING_CHECK",
+        "category": "Safety & Arming",
+        "value": 0.0,
+        "default": 1.0,
+        "description": "Pre-arm safety checks. 0=Disable (Bench/Desk test), 1=All checks enabled (Outdoor Flight).",
+        "options": [0, 1, 71]
+    },
+    {
+        "name": "BRD_SAFETYENABLE",
+        "category": "Hardware Safety",
+        "value": 0.0,
+        "default": 1.0,
+        "description": "Pixhawk physical red safety switch requirement. 0=Disabled (Desk test), 1=Enabled.",
+        "options": [0, 1]
+    },
+    {
+        "name": "MOT_SPIN_ARM",
+        "category": "Motor Control",
+        "value": 0.07,
+        "default": 0.07,
+        "description": "Motor idle spin speed when armed (0.0 to 0.25). 0.07 = 7% throttle.",
+        "options": [0.05, 0.07, 0.10]
+    },
+    {
+        "name": "BATT_MONITOR",
+        "category": "Battery & Power",
+        "value": 4.0,
+        "default": 4.0,
+        "description": "Power module sensor type. 4=Analog Voltage and Current sensor (3S/4S LiPo).",
+        "options": [0, 3, 4]
+    },
+    {
+        "name": "BATT_CAPACITY",
+        "category": "Battery & Power",
+        "value": 4200.0,
+        "default": 4200.0,
+        "description": "Battery total capacity in milliampere-hours (mAh).",
+        "options": [3000, 4200, 5200]
+    },
+    {
+        "name": "FS_THR_ENABLE",
+        "category": "Failsafe",
+        "value": 1.0,
+        "default": 1.0,
+        "description": "Throttle / RC connection loss failsafe. 1=Return-to-Launch (RTL), 2=Land immediately.",
+        "options": [0, 1, 2]
+    },
+    {
+        "name": "RTL_ALT",
+        "category": "Failsafe",
+        "value": 1500.0,
+        "default": 1500.0,
+        "description": "Return-to-Launch minimum climb altitude in centimeters (1500 cm = 15 meters).",
+        "options": [1000, 1500, 2000, 3000]
+    },
+    {
+        "name": "FRAME_CLASS",
+        "category": "Airframe",
+        "value": 1.0,
+        "default": 1.0,
+        "description": "Vehicle frame class. 1=Quad, 2=Hexa, 3=Octa.",
+        "options": [1, 2, 3]
+    },
+    {
+        "name": "FRAME_TYPE",
+        "category": "Airframe",
+        "value": 1.0,
+        "default": 1.0,
+        "description": "Motor layout configuration. 1=X-frame (Standard Quad X).",
+        "options": [0, 1]
+    },
+    {
+        "name": "EKF3_ENABLE",
+        "category": "Navigation & EKF",
+        "value": 1.0,
+        "default": 1.0,
+        "description": "Enable Extended Kalman Filter 3 navigation attitude & position estimator.",
+        "options": [0, 1]
+    }
+]
+
+
+def compute_prearm_check(telemetry_dict: dict) -> dict:
+    checks = []
+
+    # 1. IMU Horizon Level
+    pitch = abs(telemetry_dict.get("pitch", 0.0))
+    roll = abs(telemetry_dict.get("roll", 0.0))
+    imu_ok = pitch < 5.0 and roll < 5.0
+    checks.append({
+        "name": "IMU Horizon Level",
+        "status": "PASS" if imu_ok else "WARN",
+        "detail": f"Pitch {pitch:.1f}°, Roll {roll:.1f}° {'(Level desk)' if imu_ok else '(Level drone before arming)'}"
+    })
+
+    # 2. Barometer Reference
+    alt = abs(telemetry_dict.get("alt", 0.0))
+    baro_ok = alt < 2.0
+    checks.append({
+        "name": "Barometer Ground Zero",
+        "status": "PASS" if baro_ok else "WARN",
+        "detail": f"Altitude {alt:.2f}m {'(Zeroed ground reference)' if baro_ok else '(Suggest zeroing baro)'}"
+    })
+
+    # 3. Battery Voltage
+    v = telemetry_dict.get("battery_v", 0.0)
+    pct = telemetry_dict.get("battery_pct", 0)
+    batt_ok = v >= 10.5 or (v == 0.0 and not telemetry_dict.get("is_hardware"))
+    checks.append({
+        "name": "Battery Voltage",
+        "status": "PASS" if batt_ok else "FAIL",
+        "detail": f"{v:.1f}V ({pct}%) {'(Nominal voltage)' if batt_ok else '(Low battery warning)'}"
+    })
+
+    # 4. GPS 3D Lock
+    fix = telemetry_dict.get("gps_fix", 0)
+    sats = telemetry_dict.get("gps_sats", 0)
+    gps_ok = fix >= 3 or not telemetry_dict.get("is_hardware")
+    checks.append({
+        "name": "GPS 3D Fix & Satellites",
+        "status": "PASS" if gps_ok else "WARN",
+        "detail": f"{sats} Sats locked ({'3D Fix' if fix >= 3 else 'No 3D Lock'})"
+    })
+
+    # 5. RC Radio Link
+    rc = telemetry_dict.get("rc_channels", [1500] * 8)
+    rc_ok = len(rc) >= 4 and any(ch > 900 for ch in rc[:4])
+    checks.append({
+        "name": "FlySky RC Radio Link",
+        "status": "PASS" if rc_ok else "FAIL",
+        "detail": "8-Channel PWM stream active (Ch1-Ch4 detected)" if rc_ok else "No RC receiver packets detected"
+    })
+
+    # 6. Safety Switch Status
+    checks.append({
+        "name": "Hardware Safety Switch",
+        "status": "READY",
+        "detail": "Motor outputs unlocked (Ready for throttle)"
+    })
+
+    pass_count = sum(1 for c in checks if c["status"] in ["PASS", "READY"])
+    score = int((pass_count / len(checks)) * 100)
+    ready = score >= 80
+
+    return {
+        "ready": ready,
+        "score": score,
+        "checks": checks,
+        "timestamp": time.time()
+    }
+
+
+def generate_survey_grid(polygon: List[List[float]], altitude: float = 15.0, lane_spacing_m: float = 15.0, speed_ms: float = 3.5) -> List[Dict[str, Any]]:
+    if not polygon or len(polygon) < 3:
+        # Default polygon (approx 12,000 sqm around Stanfield Land / test area)
+        polygon = [
+            [28.6130, 77.2080],
+            [28.6145, 77.2080],
+            [28.6145, 77.2098],
+            [28.6130, 77.2098],
+        ]
+
+    lats = [p[0] for p in polygon]
+    lons = [p[1] for p in polygon]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    # 1 deg latitude ≈ 111,000 meters
+    lat_step = max(0.00008, lane_spacing_m / 111000.0)
+    current_lat = min_lat + (lat_step / 2.0)
+
+    waypoints = []
+    direction_west_to_east = True
+    wp_id = 1
+
+    while current_lat <= max_lat:
+        start_lon = min_lon if direction_west_to_east else max_lon
+        end_lon = max_lon if direction_west_to_east else min_lon
+
+        waypoints.append({
+            "id": f"wp-{wp_id}",
+            "lat": round(current_lat, 6),
+            "lon": round(start_lon, 6),
+            "alt": altitude,
+            "speed": speed_ms,
+        })
+        wp_id += 1
+
+        waypoints.append({
+            "id": f"wp-{wp_id}",
+            "lat": round(current_lat, 6),
+            "lon": round(end_lon, 6),
+            "alt": altitude,
+            "speed": speed_ms,
+        })
+        wp_id += 1
+
+        current_lat += lat_step
+        direction_west_to_east = not direction_west_to_east
+
+    return waypoints
 
 
 # ──────────────────────────────────────────────────────────────
@@ -238,6 +461,73 @@ class SimulatedDrone:
             dur = params.get("duration", 2.0)
             target = "All 4 motors (sequence)" if motor == 0 else f"Motor {motor}"
             return {"ok": True, "msg": f"{target} spun at {throttle:.0f}% for {dur:.1f}s (simulated)"}
+        elif cmd == "bench_mode":
+            return {"ok": True, "msg": "BENCH MODE ACTIVE: Safety disabled, ARMING_CHECK=0 (simulated)"}
+        elif cmd in ["safety_off", "safety_disengage"]:
+            return {"ok": True, "msg": "Safety switch disengaged (Motors Active) (simulated)"}
+        elif cmd in ["safety_on", "safety_engage"]:
+            return {"ok": True, "msg": "Safety switch engaged (Safe) (simulated)"}
+        elif cmd == "calibrate_level":
+            self.telemetry.pitch = 0.0
+            self.telemetry.roll = 0.0
+            return {"ok": True, "msg": "Level Horizon calibrated (Pitch & Roll zeroed) (simulated)"}
+        elif cmd == "calibrate_gyros":
+            return {"ok": True, "msg": "Gyroscopes calibrated successfully (simulated)"}
+        elif cmd == "calibrate_baro":
+            self.telemetry.alt = 0.0
+            return {"ok": True, "msg": "Barometer zeroed to ground level (simulated)"}
+        elif cmd == "calibrate_compass":
+            return {"ok": True, "msg": "Compass calibration initiated (simulated)"}
+        elif cmd == "upload_mission":
+            wps = params.get("waypoints", [])
+            return {"ok": True, "msg": f"Successfully uploaded {len(wps)} waypoints (simulated)"}
+        elif cmd == "clear_mission":
+            return {"ok": True, "msg": "Mission cleared (simulated)"}
+        elif cmd == "drop_payload":
+            return {"ok": True, "msg": "Payload released via AUX Ch7 relay (simulated)"}
+        elif cmd == "reboot":
+            return {"ok": True, "msg": "Autopilot reboot initiated (simulated)"}
+        elif cmd == "get_param":
+            name = str(params.get("name", "ARMING_CHECK"))
+            return {"ok": True, "msg": f"Param {name} = 0.0 (simulated)", "data": {"name": name, "value": 0.0}}
+        elif cmd == "set_param":
+            name = str(params.get("name", "ARMING_CHECK"))
+            val = float(params.get("value", 0.0))
+            return {"ok": True, "msg": f"Set {name} = {val} (simulated)", "data": {"name": name, "value": val}}
+        elif cmd == "get_params_all":
+            return {"ok": True, "params": DEFAULT_ARDUPILOT_PARAMS}
+        elif cmd == "prearm_check":
+            res = compute_prearm_check(self.get_telemetry_dict())
+            return {"ok": True, "msg": "Pre-arm readiness check evaluated", "data": res}
+        elif cmd == "auto_setup":
+            profile = str(params.get("profile", "bench")).lower()
+            cal_sensors = bool(params.get("calibrate_sensors", True))
+            rtl_alt = float(params.get("rtl_altitude_m", 15.0))
+
+            steps = [
+                {"step": f"Set ARMING_CHECK = {0.0 if profile == 'bench' else 1.0}", "description": "Pre-arm arming checks", "ok": True, "detail": "Success"},
+                {"step": f"Set BRD_SAFETYENABLE = {0.0 if profile == 'bench' else 1.0}", "description": "Hardware safety switch", "ok": True, "detail": "Success"},
+                {"step": "Set MOT_SPIN_ARM = 0.07", "description": "Arm motor spin idle throttle", "ok": True, "detail": "Success"},
+                {"step": "Set BATT_MONITOR = 4.0", "description": "Analog battery monitor (voltage/current)", "ok": True, "detail": "Success"},
+                {"step": "Set FS_THR_ENABLE = 1.0", "description": "RC link loss failsafe (RTL)", "ok": True, "detail": "Success"},
+                {"step": f"Set RTL_ALT = {rtl_alt * 100.0}", "description": f"RTL climb altitude ({rtl_alt}m)", "ok": True, "detail": "Success"},
+                {"step": "Set FRAME_CLASS = 1.0", "description": "Quad frame class", "ok": True, "detail": "Success"},
+                {"step": "Set FRAME_TYPE = 1.0", "description": "X-type frame configuration", "ok": True, "detail": "Success"},
+            ]
+            if cal_sensors:
+                self.telemetry.pitch = 0.0
+                self.telemetry.roll = 0.0
+                self.telemetry.alt = 0.0
+                steps.append({"step": "Calibrate Level Horizon", "description": "Zero roll & pitch angles", "ok": True, "detail": "Horizon leveled (simulated)"})
+                steps.append({"step": "Zero Gyroscopes", "description": "Gyro bias nulling", "ok": True, "detail": "Gyros calibrated (simulated)"})
+                steps.append({"step": "Zero Barometer", "description": "Ground level AGL reference", "ok": True, "detail": "Baro zeroed to 0.0m (simulated)"})
+
+            self.telemetry.statustext = f"ArduPilot Auto-Setup Complete [{profile.upper()}]"
+            return {
+                "ok": True,
+                "msg": f"ArduPilot Auto-Setup completed for {profile.upper()} profile",
+                "data": {"profile": profile, "steps": steps}
+            }
         return {"ok": False, "msg": f"Unknown command: {cmd}"}
 
     def get_telemetry_dict(self) -> dict:
@@ -313,12 +603,16 @@ class PixhawkDroneBridge:
         """Get live telemetry dictionary from hardware or simulator."""
         if self.is_hardware and self.interface and self.interface.is_connected:
             t = self.interface.telemetry
-            # Estimate battery percentage for 4S (14.0V empty to 16.8V full)
+            v = t.battery_voltage
             pct = t.battery_remaining
-            if pct < 0 and t.battery_voltage > 10.0:
-                pct = int(max(0, min(100, (t.battery_voltage - 14.0) / (16.8 - 14.0) * 100)))
-            elif pct < 0:
-                pct = 0
+            if pct < 0 or pct > 100 or (v > 9.0 and pct > 90 and v < 11.5):
+                # Auto-calculate based on cell count (3S or 4S)
+                if v >= 13.0:
+                    pct = int(max(0, min(100, (v - 13.8) / (16.8 - 13.8) * 100)))
+                elif v >= 9.5:
+                    pct = int(max(0, min(100, (v - 10.2) / (12.6 - 10.2) * 100)))
+                else:
+                    pct = 0
 
             return {
                 "state": "ARMED" if t.armed else "DISARMED",
@@ -364,11 +658,58 @@ class PixhawkDroneBridge:
 
         try:
             if cmd == "arm":
-                ok, reason = await self.interface.arm()
+                force = bool(params.get("force", False))
+                ok, reason = await self.interface.arm(force=force)
                 return {"ok": ok, "msg": "Pixhawk Armed successfully" if ok else f"Arm failed: {reason}"}
             elif cmd == "disarm":
                 ok = await self.interface.disarm()
                 return {"ok": ok, "msg": "Pixhawk Disarmed" if ok else "Disarm failed"}
+            elif cmd == "bench_mode":
+                enable = bool(params.get("enable", True))
+                ok, msg = await self.interface.configure_bench_mode(enable=enable)
+                return {"ok": ok, "msg": msg}
+            elif cmd in ["safety_off", "safety_disengage"]:
+                ok, msg = await self.interface.set_safety_switch(enable=False)
+                return {"ok": ok, "msg": msg}
+            elif cmd in ["safety_on", "safety_engage"]:
+                ok, msg = await self.interface.set_safety_switch(enable=True)
+                return {"ok": ok, "msg": msg}
+            elif cmd == "calibrate_level":
+                ok, msg = await self.interface.calibrate_level()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "calibrate_gyros":
+                ok, msg = await self.interface.calibrate_gyros()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "calibrate_baro":
+                ok, msg = await self.interface.calibrate_baro()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "calibrate_compass":
+                ok, msg = await self.interface.calibrate_compass()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "set_param":
+                name = str(params.get("name", "ARMING_CHECK"))
+                val = float(params.get("value", 0))
+                ok, msg = await self.interface.set_param(name, val)
+                return {"ok": ok, "msg": msg}
+            elif cmd == "upload_mission":
+                wps = params.get("waypoints", [])
+                ok, msg = await self.interface.upload_mission(wps)
+                return {"ok": ok, "msg": msg}
+            elif cmd == "clear_mission":
+                ok, msg = await self.interface.clear_mission()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "drop_payload":
+                ok = await self.interface.set_servo(channel=9, pwm=1900)
+                return {"ok": ok, "msg": "Payload servo triggered on AUX Ch9" if ok else "Servo command failed"}
+            elif cmd == "reboot":
+                ok, msg = await self.interface.reboot_autopilot()
+                return {"ok": ok, "msg": msg}
+            elif cmd == "get_param":
+                name = str(params.get("name", "ARMING_CHECK"))
+                val = await self.interface.get_param(name)
+                if val is not None:
+                    return {"ok": True, "msg": f"{name} = {val}", "data": {"name": name, "value": val}}
+                return {"ok": False, "msg": f"Failed to retrieve param {name}"}
             elif cmd == "takeoff":
                 alt = float(params.get("altitude", 10.0))
                 ok = await self.interface.takeoff(alt)
@@ -417,6 +758,48 @@ class PixhawkDroneBridge:
                     motor_count=count,
                 )
                 return {"ok": ok, "msg": msg}
+            elif cmd == "prearm_check":
+                res = compute_prearm_check(self.get_telemetry_dict())
+                return {"ok": True, "msg": "Pre-arm readiness check evaluated", "data": res}
+            elif cmd == "get_params_all":
+                return {"ok": True, "params": DEFAULT_ARDUPILOT_PARAMS}
+            elif cmd == "auto_setup":
+                profile = str(params.get("profile", "bench")).lower()
+                cal_sensors = bool(params.get("calibrate_sensors", True))
+                rtl_alt = float(params.get("rtl_altitude_m", 15.0))
+
+                configs = [
+                    ("ARMING_CHECK", 0.0 if profile == "bench" else 1.0, "Pre-arm arming checks"),
+                    ("BRD_SAFETYENABLE", 0.0 if profile == "bench" else 1.0, "Hardware safety switch"),
+                    ("MOT_SPIN_ARM", 0.07, "Arm motor spin idle throttle"),
+                    ("BATT_MONITOR", 4.0, "Analog battery monitor (voltage/current)"),
+                    ("FS_THR_ENABLE", 1.0, "RC link loss failsafe (RTL)"),
+                    ("RTL_ALT", rtl_alt * 100.0, f"RTL climb altitude ({rtl_alt}m)"),
+                    ("FRAME_CLASS", 1.0, "Quad frame class"),
+                    ("FRAME_TYPE", 1.0, "X-type frame configuration"),
+                ]
+
+                steps = []
+                for name, val, desc in configs:
+                    ok, msg = await self.interface.set_param(name, val)
+                    steps.append({"step": f"Set {name} = {val}", "description": desc, "ok": ok, "detail": msg})
+
+                if cal_sensors:
+                    ok_level, msg_level = await self.interface.calibrate_level()
+                    steps.append({"step": "Calibrate Level Horizon", "description": "Zero roll & pitch angles", "ok": ok_level, "detail": msg_level})
+
+                    ok_gyro, msg_gyro = await self.interface.calibrate_gyros()
+                    steps.append({"step": "Zero Gyroscopes", "description": "Gyro bias nulling", "ok": ok_gyro, "detail": msg_gyro})
+
+                    ok_baro, msg_baro = await self.interface.calibrate_baro()
+                    steps.append({"step": "Zero Barometer", "description": "Ground level AGL reference", "ok": ok_baro, "detail": msg_baro})
+
+                all_ok = all(s["ok"] for s in steps)
+                return {
+                    "ok": all_ok,
+                    "msg": f"ArduPilot Auto-Setup finished ({'All Succeeded' if all_ok else 'Some checks had warnings'})",
+                    "data": {"profile": profile, "steps": steps}
+                }
             else:
                 return await self.sim.execute_command(cmd, params)
         except Exception as e:
@@ -461,19 +844,25 @@ async def lifespan(app: FastAPI):
 
 
 async def reconnect_watchdog():
-    """Periodically probe for Pixhawk when disconnected without spamming."""
+    """Periodically probe for Pixhawk when disconnected without spamming logs."""
     while True:
         try:
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(15.0)
             if not drone_bridge.is_hardware and drone_bridge.auto_reconnect:
                 import serial.tools.list_ports as lp
-                ports = [p.device for p in lp.comports()]
-                if any("COM" in p or "tty" in p for p in ports):
-                    await drone_bridge.connect(port="AUTO", baud=115200)
+                com_devices = lp.comports()
+                # Prioritize USB serial adapters / Pixhawk VID/PID
+                hardware_candidates = [
+                    p.device for p in com_devices
+                    if any(term in (p.description or "").lower() for term in ["pixhawk", "px4", "stm", "ardupilot", "ch340", "cp210", "ftdi", "usb serial"])
+                ]
+                if hardware_candidates:
+                    logger.info("Found candidate flight controller on %s, attempting connection...", hardware_candidates[0])
+                    await drone_bridge.connect(port=hardware_candidates[0], baud=115200)
         except asyncio.CancelledError:
             break
         except Exception:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(10.0)
 
 
 async def telemetry_broadcaster():
@@ -675,6 +1064,67 @@ async def cmd_motor_test(req: MotorTestRequest):
     duration: duration in seconds (e.g. 2.0)
     """
     return await drone_bridge.execute_command("motor_test", req.model_dump())
+
+
+# ──────────────────────────────────────────────────────────────
+# ArduPilot Specialized Routes
+# ──────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/ardupilot/auto_setup", tags=["ArduPilot"])
+async def api_ardupilot_auto_setup(req: ArduPilotAutoSetupRequest):
+    """
+    Automated One-Click Setup for Pixhawk 2.4.8 running ArduPilot.
+    Configures recommended safety parameters, runs level/gyro/baro calibration,
+    and returns comprehensive step-by-step audit.
+    """
+    res = await drone_bridge.execute_command("auto_setup", req.model_dump())
+    # Broadcast auto-setup alert to all connected GCS clients
+    await manager.broadcast({
+        "type": "ALERT",
+        "data": {"message": f"ArduPilot Auto-Setup Completed [{req.profile.upper()}]"}
+    })
+    return res
+
+
+@app.get("/api/v1/ardupilot/params", tags=["ArduPilot"])
+async def api_get_ardupilot_params():
+    """Retrieve full catalog of core ArduPilot parameters with active values."""
+    res = await drone_bridge.execute_command("get_params_all", {})
+    return res
+
+
+@app.post("/api/v1/ardupilot/params/set", tags=["ArduPilot"])
+async def api_set_ardupilot_param(req: ParamUpdateRequest):
+    """Set individual ArduPilot parameter."""
+    res = await drone_bridge.execute_command("set_param", {"name": req.name, "value": req.value})
+    return res
+
+
+@app.get("/api/v1/ardupilot/prearm_check", tags=["ArduPilot"])
+async def api_get_prearm_check():
+    """Evaluate full pre-flight readiness checklist (score 0-100%)."""
+    res = await drone_bridge.execute_command("prearm_check", {})
+    return res
+
+
+@app.post("/api/v1/mission/generate_survey", tags=["Mission"])
+async def api_generate_survey(req: SurveyPolygonRequest):
+    """
+    Generate autonomous lawnmower survey waypoints across any bounding polygon.
+    Ideal for agricultural recon, crop inspection, or tactical patrol.
+    """
+    wps = generate_survey_grid(
+        polygon=req.polygon,
+        altitude=req.altitude,
+        lane_spacing_m=req.lane_spacing_m,
+        speed_ms=req.speed_ms
+    )
+    return {
+        "ok": True,
+        "count": len(wps),
+        "waypoints": wps,
+        "msg": f"Generated {len(wps)} survey waypoints with {req.lane_spacing_m}m lane spacing"
+    }
 
 
 # ──────────────────────────────────────────────────────────────

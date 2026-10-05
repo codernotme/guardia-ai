@@ -69,3 +69,57 @@ export interface WaypointItem {
   alt: number;
   speed: number;
 }
+
+export interface ArduPilotParam {
+  name: string;
+  category: string;
+  value: number;
+  default: number;
+  description: string;
+  options?: number[];
+}
+
+export interface PrearmCheckItem {
+  name: string;
+  status: "PASS" | "WARN" | "FAIL" | "READY";
+  detail: string;
+}
+
+export interface PrearmReport {
+  ready: boolean;
+  score: number;
+  checks: PrearmCheckItem[];
+  timestamp: number;
+}
+
+export interface AutoSetupStep {
+  step: string;
+  description: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface AutoSetupReport {
+  ok: boolean;
+  msg: string;
+  data?: {
+    profile: string;
+    steps: AutoSetupStep[];
+  };
+}
+
+export interface FieldSector {
+  id: string;
+  name: string;
+  code: string;
+  areaSqm: number;
+  location: string;
+  group: string;
+  roi: string;
+  cropType: string;
+  plantingDate: string;
+  harvestDate: string;
+  health: number; // 0-100
+  status: "active" | "standby" | "alert";
+  polygon: [number, number][];
+}

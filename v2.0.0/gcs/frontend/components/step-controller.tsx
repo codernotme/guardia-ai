@@ -19,6 +19,7 @@ import {
   Home,
   OctagonAlert,
   Crosshair,
+  Zap,
 } from "lucide-react";
 import { GcsTooltip } from "@/components/ui/gcs-tooltip";
 
@@ -297,6 +298,24 @@ export default function StepController({
                 <span>RTL</span>
               </Button>
             </GcsTooltip>
+
+            {!armed && (
+              <GcsTooltip content="Direct bench arm override (bypasses pre-arm checks with magic 21196)">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="font-mono text-[11px] font-bold text-danger border-danger/40 hover:bg-danger/10 col-span-2 h-7"
+                  onPress={() => {
+                    if (confirm("⚠️ FORCE ARM (BENCH TEST):\n\nEnsure all propellers are removed!\nBypasses pre-arm checks to test motors directly.")) {
+                      onCommand("arm", { force: true }, true);
+                    }
+                  }}
+                >
+                  <Zap className="w-3 h-3" />
+                  <span>Force Arm (Bench Override)</span>
+                </Button>
+              </GcsTooltip>
+            )}
           </div>
 
           {/* Emergency Kill Switch */}

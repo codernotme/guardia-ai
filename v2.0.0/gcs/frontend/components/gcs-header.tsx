@@ -1,17 +1,18 @@
 "use client";
 
-import { Card, Chip } from "@heroui/react";
+import { Button, Card, Chip } from "@heroui/react";
 import { TelemetryData } from "@/types/telemetry";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { Plane, Cpu, Wifi, WifiOff, Battery, Satellite, Gauge } from "lucide-react";
+import { Plane, Cpu, Wifi, WifiOff, Battery, Satellite, Gauge, Wrench } from "lucide-react";
 import { GcsTooltip } from "@/components/ui/gcs-tooltip";
 
 interface GcsHeaderProps {
   telemetry: TelemetryData;
   connected: boolean;
+  onOpenCalibration?: () => void;
 }
 
-export default function GcsHeader({ telemetry, connected }: GcsHeaderProps) {
+export default function GcsHeader({ telemetry, connected, onOpenCalibration }: GcsHeaderProps) {
   const isGuided = telemetry.flight_mode === "GUIDED";
   const batteryLow = telemetry.battery_v < 10.5;
 
@@ -93,6 +94,17 @@ export default function GcsHeader({ telemetry, connected }: GcsHeaderProps) {
 
         {/* Right side tools */}
         <div className="flex items-center gap-2">
+          {onOpenCalibration && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="font-mono text-xs font-semibold gap-1.5 h-8 border-accent/40 hover:bg-accent/10 text-accent"
+              onPress={onOpenCalibration}
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              <span>Calibrate & Setup</span>
+            </Button>
+          )}
           <ThemeSwitch />
         </div>
       </div>
